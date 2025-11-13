@@ -1,0 +1,92 @@
+#############################
+#      .NET / C# BUILD      #
+#############################
+
+bin/
+obj/
+out/
+TestResults/
+[Bb]uild/
+[Ll]ogs/
+*.log
+
+#############################
+#       RIDER / JETBRAINS   #
+#############################
+
+.idea/
+*.iml
+_ReSharper.Caches/
+
+#############################
+#        VISUAL STUDIO      #
+#############################
+
+.vs/
+*.user
+*.suo
+*.vcxproj.user
+*.psess
+*.vsp
+*.vspx
+
+#############################
+#        NUGET / ARTIFACTS  #
+#############################
+
+*.nupkg
+*.snupkg
+artifacts/
+packages/
+project.lock.json
+project.fragment.lock.json
+*.nuget.props
+*.nuget.targets
+
+#############################
+#        CONFIG / TEMP      #
+#############################
+
+*.tmp
+*.temp
+*.cache
+*.pid
+*.env
+*.DS_Store
+Thumbs.db
+
+#############################
+#         DATABASES         #
+#############################
+
+*.db
+*.sqlite
+*.mdf
+*.ldf
+*.ndf
+
+#############################
+#       COVERAGE / TESTS    #
+#############################
+
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.info
+nunit-*.xml
+*.trx
+
+#############################
+#       PUBLISH OUTPUT      #
+#############################
+
+Publish/
+publish/
+*.publishproj
+
+#############################
+#         MISC OS FILES     #
+#############################
+
+*.swp
+*~
