@@ -30,7 +30,7 @@ public class Message
     
     public override string ToString()
     {
-        return $"[{_timestamp}] ({_type}) {_sender} -> {_receiver}: {_text}";
+        return $"[{_timestamp}] [{_type}] {_sender} -> {_receiver}: {_text}";
     }
 
 }

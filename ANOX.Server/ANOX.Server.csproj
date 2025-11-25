@@ -10,6 +10,7 @@
 
     <ItemGroup>
       <ProjectReference Include="..\ANOX.Core\ANOX.Core.csproj" />
+      <ProjectReference Include="..\ANOX.Logger\ANOX.Logger.csproj" />
     </ItemGroup>
 
 </Project>
