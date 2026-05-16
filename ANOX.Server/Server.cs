@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
-using ANOX.Core;
 using ANOX.Logger;
 
 namespace ANOX.Server;
@@ -11,6 +9,8 @@ class Server
 {
     static void Main(string[] args)
     {
+        ILogger logger = new ConsoleLogger();
+        
         bool isListening = true;
         
         IPAddress ipAddress = IPAddress.Parse("192.168.0.55");
@@ -18,13 +18,14 @@ class Server
         
         TcpListener tcpListener = new TcpListener(ipAddress, port);
         tcpListener.Start();
-        Console.WriteLine("Server started! Waiting for connections...");
+        logger.Log(LogType.Info, "Server started succesfully!");
 
         while (isListening)
         {
             TcpClient tcpClient = tcpListener.AcceptTcpClient();
+            logger.Log(LogType.Info, "Client connected!");
 
-            ClientSession clientSession = new ClientSession(tcpClient);
+            ClientSession clientSession = new ClientSession(tcpClient, logger);
             
             clientSession.Start();
         }
