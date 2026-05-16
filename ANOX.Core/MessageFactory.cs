@@ -31,8 +31,7 @@ public static class MessageFactory
             type,
             sender,
             receiver,
-            text,
-            timestamp
+            text
         );
     }
 

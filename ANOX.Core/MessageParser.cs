@@ -10,13 +10,12 @@ public static class MessageParser
         StringBuilder stringBuilder = new StringBuilder();
         
         string parsedMessageText = Convert.ToBase64String(Encoding.UTF8.GetBytes(message.GetMessageText()));
-        
+
         stringBuilder.AppendJoin('|',
             message.GetMessageType().ToString(),
             message.GetSenderName(),
             message.GetReceiverName(),
-            parsedMessageText,
-            message.GetMessageTime());
+            parsedMessageText);
         
         return stringBuilder.ToString();
     }
@@ -26,11 +25,10 @@ public static class MessageParser
         string[] parts = serializedMessage.Split('|', 4);
 
         return new Message(
-            MessageType.UserMessage,
-            parts[0],
+            Enum.Parse<MessageType>(parts[0]),
             parts[1],
             parts[2],
-            parts[3]
+            Encoding.UTF8.GetString(Convert.FromBase64String(parts[3]))
         );
     }
 }
