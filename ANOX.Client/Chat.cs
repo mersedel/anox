@@ -16,6 +16,8 @@ public class Chat
     private TcpClient _tcpClient;
     private NetworkStream _stream;
 
+    private bool _isConnected = false;
+    
     private bool _isRegistered = false;
     
     private bool _isReceiving = true;
@@ -36,12 +38,13 @@ public class Chat
     {
         _tcpClient = new TcpClient();
         _tcpClient.Connect(_serverIp, _port);
+        _isConnected = true;
 
         _stream = _tcpClient.GetStream();
         
         if (!_isRegistered)
         {
-            RegistrateClient();
+            RegisterClient();
         }
         
         
@@ -56,13 +59,20 @@ public class Chat
         Thread.Sleep(Timeout.Infinite);
     }
 
-    private void RegistrateClient()
+    private void RegisterClient()
     {
         _logger.Log(LogType.Info, $"Enter username: ");
 
         _username = Console.ReadLine();
         
-        _stream.Write(Encoding.UTF8.GetBytes(_username));
+        SendMessage(MessageFactory.CreateRegisterMessage(_username));
+    }
+
+    private void SendMessage(Message message)
+    {
+        string serializedMessage = MessageParser.SerializeMessage(message);
+        
+        _stream.Write(Encoding.UTF8.GetBytes(serializedMessage));
     }
 
     private void ReceiveLoop()
@@ -81,6 +91,12 @@ public class Chat
                 string serializedMessage = Encoding.UTF8.GetString(_receiveBuffer, 0, bytesRead);
 
                 Message message = MessageParser.DeserializeClientMessage(serializedMessage);
+
+                if (message.GetMessageType() == MessageType.ServerError)
+                {
+                    _logger.Log(LogType.Error, $"Error from server: {message.GetMessageText()}");
+                    break;
+                }
 
                 _logger.Log(LogType.Info, $"Message from [{message.GetSenderName()}]: {message.GetMessageText()}");
             }
@@ -104,10 +120,12 @@ public class Chat
                 _logger.Log(LogType.Info, $"Enter message to broadcast: ");
 
                 string messageText = Console.ReadLine();
-
-                string serializedMessage = MessageParser.SerializeMessage(MessageFactory.CreateBroadcast(_username, messageText));
                 
-                _stream.Write(Encoding.UTF8.GetBytes(serializedMessage));
+                if (!_isSending) break;
+                
+                if (string.IsNullOrWhiteSpace(messageText)) continue;
+
+                SendMessage(MessageFactory.CreateBroadcast(_username, messageText));
             }
         }
         catch (Exception e)
@@ -122,6 +140,9 @@ public class Chat
 
     private void Disconnect()
     {
+        if (!_isConnected) return;
+        _isConnected = false;
+        
         _isReceiving = false;
         _isSending = false;
         
