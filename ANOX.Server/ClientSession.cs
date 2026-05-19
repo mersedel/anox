@@ -10,6 +10,8 @@ namespace ANOX.Server;
 public class ClientSession
 {
     private ILogger _logger;
+
+    private bool _isConnected;
     
     private bool _isRegistered;
     
@@ -22,11 +24,6 @@ public class ClientSession
 
     private string _clientUsername;
     public string Username => _clientUsername;
-
-    public void SetUsername(string username)
-    {
-        _clientUsername = username;
-    }
     
     public ClientSession(TcpClient tcpClient, ILogger logger)
     {
@@ -37,11 +34,22 @@ public class ClientSession
 
     public void Start()
     {
+        _isConnected = true;
+        
         Thread thread = new Thread(ReceiveLoop);
 
         thread.IsBackground = true;
         
         thread.Start();
+    }
+
+    private void RegisterClient(string username)
+    {
+        _clientUsername = username;
+        
+        ClientManager.AddClient(_clientUsername, this);
+        _isRegistered = true;
+        _logger.Log(LogType.Info, $"Client registered with name [{Username}]");
     }
 
     private void ReceiveLoop()
@@ -56,28 +64,33 @@ public class ClientSession
                 {
                     break;
                 }
-            
-                string receivedMessage = Encoding.UTF8.GetString(_receiveBuffer, 0, bytesRead);
+                
+                string receivedSerializedMessage = Encoding.UTF8.GetString(_receiveBuffer, 0, bytesRead);
+                
+                Message message = MessageParser.DeserializeClientMessage(receivedSerializedMessage);
 
-                if (!_isRegistered)
+                if (!_isRegistered && message.GetMessageType() == MessageType.Register)
                 {
-                    SetUsername(receivedMessage);
-                    ClientManager.AddClient(receivedMessage, this);
-                    _isRegistered = true;
-                    _logger.Log(LogType.Info, $"Client registered with name: [{Username}]");
+                    if (ClientManager.ContainsClient(message.GetSenderName()))
+                    {
+                        SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.NameAlreadyTaken, Username));
+                        
+                        _logger.Log(LogType.Error, $"Username [{receivedSerializedMessage}] already taken, sending ErrorMessage to client");
+                        return;
+                    }
+                    RegisterClient(message.GetMessageText());
                 }
                 else
                 {
-                    Message message = MessageParser.DeserializeClientMessage(receivedMessage);
-                    _logger.Log(LogType.Info,$"Received broadcast message [{message.GetMessageText()}] from: [{Username}]");
+                    _logger.Log(LogType.Info,$"Received broadcast message [{message.GetMessageText()}] from [{Username}]");
                     
-                    ClientManager.Broadcast(receivedMessage, Username);
+                    ClientManager.Broadcast(message, Username); // broadcasting serialized message to receiver
                 }
             }
         }
         catch (Exception e)
         {
-            _logger.Log(LogType.Error, $"Error in Receive(): {e.Message}");
+            _logger.Log(LogType.Error, $"Error in Receive() -> {e.Message}");
         }
         finally
         {
@@ -85,11 +98,12 @@ public class ClientSession
         }
     }
 
-    public void Send(string message)
+    public void SendMessage(Message message)
     {
         try
         {
-            byte[] bytes = Encoding.UTF8.GetBytes(message);
+            string serializedMessage = MessageParser.SerializeMessage(message);
+            byte[] bytes = Encoding.UTF8.GetBytes(serializedMessage);
             
             _stream.Write(bytes);
         }
@@ -101,6 +115,9 @@ public class ClientSession
 
     private void Disconnect()
     {
+        if (!_isConnected) return;
+        _isConnected = false;
+        
         _isReceiving = false;
         _stream.Close();
         _tcpClient.Close();
@@ -110,6 +127,6 @@ public class ClientSession
             ClientManager.RemoveClient(Username);
         }
         
-        _logger.Log(LogType.Info, $"Client [{Username}] disconnected!");
+        _logger.Log(LogType.Info, $"Client [{Username ?? "unregistered"}] disconnected!");
     }
 }

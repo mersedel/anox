@@ -3,8 +3,9 @@ namespace ANOX.Core;
 public enum MessageType
 { 
     UserMessage = 0,
-    SystemInfo = 1,
-    CommandResponse = 2,
-    Broadcast = 3,
-    ServerError = 4
+    Register = 1,
+    SystemInfo = 2,
+    CommandResponse = 3,
+    Broadcast = 4,
+    ServerError = 5
 }

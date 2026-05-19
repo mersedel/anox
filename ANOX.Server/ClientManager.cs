@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using ANOX.Core;
 
 namespace ANOX.Server;
 
@@ -17,6 +18,14 @@ public static class ClientManager
         }
     }
 
+    public static bool ContainsClient(string username)
+    {
+        lock (_lock)
+        {
+            return _allClients.ContainsKey(username);
+        }
+    }
+
     public static ClientSession GetClientSession(string username)
     {
         lock (_lock)
@@ -25,7 +34,7 @@ public static class ClientManager
         }
     }
 
-    public static int Broadcast(string message, string senderUsername)
+    public static int Broadcast(Message message, string senderUsername)
     {
         List<ClientSession> targets;
     
@@ -38,7 +47,7 @@ public static class ClientManager
     
         foreach (var session in targets)
         {
-            session.Send(message);
+            session.SendMessage(message);
         }
     
         return targets.Count;

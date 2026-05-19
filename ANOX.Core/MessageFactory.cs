@@ -68,6 +68,11 @@ public static class MessageFactory
     {
         return CreateMessage(MessageType.UserMessage, sender, receiver, text);
     }
+    
+    public static Message CreateRegisterMessage(string username)
+    {
+        return CreateMessage(MessageType.Register, username, "SERVER", username);
+    }
 
     public static Message CreateSystemMessage(string text)
     {

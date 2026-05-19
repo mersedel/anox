@@ -19,6 +19,8 @@ class Server
         TcpListener tcpListener = new TcpListener(ipAddress, port);
         tcpListener.Start();
         logger.Log(LogType.Info, "Server started succesfully!");
+        
+        logger.Log(LogType.Info, "Waiting for clients...");
 
         while (isListening)
         {
