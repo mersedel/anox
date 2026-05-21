@@ -66,7 +66,7 @@ public static class MessageFactory
     {
         return CreateMessage(MessageType.UserMessage, sender, receiver, text);
     }
-
+    
     public static Message CreateRegisterMessage(string username)
     {
         return CreateMessage(MessageType.Register, username, "SERVER", username);
@@ -75,6 +75,11 @@ public static class MessageFactory
     public static Message CreateSystemMessage(string text)
     {
         return CreateMessage(MessageType.SystemInfo, "SERVER", "ALL", text);
+    }
+    
+    public static Message CreateSystemMessage(string receiver, string text)
+    {
+        return CreateMessage(MessageType.SystemInfo, "SERVER", receiver, text);
     }
 
     public static Message CreateBroadcast(string sender, string text)
@@ -85,5 +90,15 @@ public static class MessageFactory
     public static Message CreateCommandResponse(string receiver, string text)
     {
         return CreateMessage(MessageType.CommandResponse, "SERVER", receiver, text);
+    }
+
+    public static Message CreateSessionConnectRequest(string sender, string receiver)
+    {
+        return CreateMessage(MessageType.SessionConnectRequest, sender, receiver, string.Empty);
+    }
+    
+    public static Message CreateSessionConnectResponse(string sender, string receiver, string response)
+    {
+        return CreateMessage(MessageType.SessionConnectResponse, sender, receiver, response);
     }
 }
