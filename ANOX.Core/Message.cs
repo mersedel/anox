@@ -27,5 +27,4 @@ public class Message
     {
         return $"[{_type}] {_sender} -> {_receiver}: {_text}";
     }
-
 }

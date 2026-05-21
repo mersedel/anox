@@ -8,9 +8,9 @@ public static class ClientManager
 {
     private static readonly object _lock = new();
     
-    private static Dictionary<string, ClientSession> _allClients = new();
+    private static Dictionary<string, Client> _allClients = new();
 
-    public static void AddClient(string username, ClientSession session)
+    public static void AddClient(string username, Client session)
     {
         lock (_lock)
         {
@@ -26,7 +26,7 @@ public static class ClientManager
         }
     }
 
-    public static ClientSession GetClientSession(string username)
+    public static Client GetClient(string username)
     {
         lock (_lock)
         {
@@ -36,7 +36,7 @@ public static class ClientManager
 
     public static int Broadcast(Message message, string senderUsername)
     {
-        List<ClientSession> targets;
+        List<Client> targets;
     
         lock (_lock)
         {

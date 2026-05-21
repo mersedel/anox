@@ -27,9 +27,9 @@ class Server
             TcpClient tcpClient = tcpListener.AcceptTcpClient();
             logger.Log(LogType.Info, "Client connected!");
 
-            ClientSession clientSession = new ClientSession(tcpClient, logger);
+            Client client = new Client(tcpClient, logger);
             
-            clientSession.Start();
+            client.Start();
         }
     }
 }
