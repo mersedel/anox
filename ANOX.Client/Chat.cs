@@ -98,6 +98,11 @@ public class Chat
                     break;
                 }
 
+                if (message.GetMessageType() == MessageType.SystemInfo && !_isRegistered)
+                {
+                    _isRegistered = true;
+                }
+
                 _logger.Log(LogType.Info, $"Message from [{message.GetSenderName()}]: {message.GetMessageText()}");
             }
         }
@@ -113,6 +118,10 @@ public class Chat
 
     private void SendLoop()
     {
+        while (!_isRegistered) 
+        {
+            Thread.Sleep(50);
+        }
         try
         {
             while (_isSending)
