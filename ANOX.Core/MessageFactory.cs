@@ -25,8 +25,6 @@ public static class MessageFactory
         string receiver,
         string text)
     {
-        string timestamp = DateTime.Now.ToString("HH:mm:ss");
-
         return new Message(
             type,
             sender,
@@ -78,6 +76,11 @@ public static class MessageFactory
     {
         return CreateMessage(MessageType.SystemInfo, "SERVER", "ALL", text);
     }
+    
+    public static Message CreateSystemMessage(string receiver, string text)
+    {
+        return CreateMessage(MessageType.SystemInfo, "SERVER", receiver, text);
+    }
 
     public static Message CreateBroadcast(string sender, string text)
     {
@@ -87,5 +90,15 @@ public static class MessageFactory
     public static Message CreateCommandResponse(string receiver, string text)
     {
         return CreateMessage(MessageType.CommandResponse, "SERVER", receiver, text);
+    }
+
+    public static Message CreateSessionConnectRequest(string sender, string receiver)
+    {
+        return CreateMessage(MessageType.SessionConnectRequest, sender, receiver, string.Empty);
+    }
+    
+    public static Message CreateSessionConnectResponse(string sender, string receiver, string response)
+    {
+        return CreateMessage(MessageType.SessionConnectResponse, sender, receiver, response);
     }
 }

@@ -7,5 +7,7 @@ public enum MessageType
     SystemInfo = 2,
     CommandResponse = 3,
     Broadcast = 4,
-    ServerError = 5
+    ServerError = 5,
+    SessionConnectRequest = 6,
+    SessionConnectResponse = 7
 }
