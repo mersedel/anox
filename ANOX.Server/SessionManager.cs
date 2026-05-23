@@ -9,14 +9,29 @@ public static class SessionManager
     
     private static Dictionary<string, ChatSession> _allChatSessions = new();
     
-    public static void AddSession(Client clientA, Client clientB)
+    public static bool TryAddSession(Client clientA, Client clientB, out string errorReason)
     {
+        if (!ClientManager.ContainsClient(clientA.Username) || !ClientManager.ContainsClient(clientB.Username))
+        {
+            errorReason = "Receiver not found!";
+            return false;
+        }
+
+        if (ContainsSession(clientA.Username) || ContainsSession(clientB.Username))
+        {
+            errorReason = "User already in session!";
+            return false;
+        }
+        
         ChatSession session = new ChatSession(clientA, clientB);
     
         lock (_lock)
         {
             _allChatSessions.Add(clientA.Username, session);
             _allChatSessions.Add(clientB.Username, session);
+
+            errorReason = string.Empty;
+            return true;
         }
     }
     

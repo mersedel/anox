@@ -30,7 +30,8 @@ public static class ClientManager
     {
         lock (_lock)
         {
-            return _allClients[username];
+            _allClients.TryGetValue(username, out Client client);
+            return client;
         }
     }
 
