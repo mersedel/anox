@@ -90,9 +90,57 @@ public class Client
                 }
                 else
                 {
-                    _logger.Log(LogType.Info,$"Received broadcast message [{message.GetMessageText()}] from [{Username}]");
-                    
-                    ClientManager.Broadcast(message, Username); // broadcasting serialized message to receiver
+                    switch (message.GetMessageType())
+                    {
+                        case MessageType.SessionConnectRequest:
+                            Client clientB = ClientManager.GetClient(message.GetReceiverName());
+                            
+                            if (clientB == null)
+                            {
+                                SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.ReceiverNotFound, Username));
+                                break;
+                            }
+                            
+                            string errorReason;
+                            
+                            if (SessionManager.TryAddSession(this, clientB, out errorReason))
+                            {
+                                SendMessage(MessageFactory.CreateSessionConnectResponse(Username, message.GetReceiverName(), 
+                                    $"Created session with {message.GetReceiverName()}"));
+                                clientB.SendMessage(MessageFactory.CreateSessionConnectResponse(message.GetReceiverName(), Username, 
+                                    $"Created session with {Username}"));
+                            }
+                            else
+                            {
+                                if (errorReason == "Receiver not found!")
+                                {
+                                    SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.ReceiverNotFound,
+                                        Username));
+                                }
+                                if (errorReason == "User already in session!")
+                                {
+                                    SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.AlreadyInSession,
+                                        Username));
+                                }
+                            }
+                            break;
+            
+                        case MessageType.UserMessage:
+                            ChatSession session = SessionManager.GetSession(Username);
+                            if (session != null)
+                                session.Route(message, Username);
+                            else
+                                _logger.Log(LogType.Warning, $"[{Username}] sent UserMessage but has no active session");
+                            break;
+            
+                        case MessageType.Broadcast:
+                            // nothing for now
+                            break;
+            
+                        default:
+                            _logger.Log(LogType.Warning, $"Unexpected message type [{message.GetMessageType()}] from [{Username}]");
+                            break;
+                    }
                 }
             }
         }
@@ -133,6 +181,7 @@ public class Client
         if (_isRegistered)
         {
             ClientManager.RemoveClient(Username);
+            SessionManager.RemoveSession(Username);
         }
         
         _logger.Log(LogType.Info, $"Client [{Username ?? "unregistered"}] disconnected!");
