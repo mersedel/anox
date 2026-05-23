@@ -19,11 +19,13 @@ public class Chat
     private bool _isConnected = false;
     
     private bool _isRegistered = false;
-    
+
+    private bool _isInSession = false;
     private bool _isReceiving = true;
     private bool _isSending = true;
     
     private string _username;
+    private string _connectedToUsername;
     
     private string _serverIp;
     private int _port;
@@ -61,11 +63,27 @@ public class Chat
 
     private void RegisterClient()
     {
-        _logger.Log(LogType.Info, $"Enter username: ");
+        Console.WriteLine("Enter Username: ");
 
         _username = Console.ReadLine();
         
         SendMessage(MessageFactory.CreateRegisterMessage(_username));
+        
+        Console.Clear();
+    }
+
+    private void ConnectToUser()
+    {
+        if (_isInSession) return;
+    
+        Console.WriteLine("\nEnter username to connect to: ");
+        _connectedToUsername = Console.ReadLine();
+        SendMessage(MessageFactory.CreateSessionConnectRequest(_username, _connectedToUsername));
+    
+        while (!_isInSession)
+        {
+            Thread.Sleep(50);
+        }
     }
 
     private void SendMessage(Message message)
@@ -102,6 +120,14 @@ public class Chat
                 {
                     _isRegistered = true;
                 }
+                
+                if (message.GetMessageType() == MessageType.SessionConnectResponse)
+                {
+                    _connectedToUsername = message.GetReceiverName();
+                    _isInSession = true;
+                    _logger.Log(LogType.Info, $"Peer session! Connected with user: {_connectedToUsername}");
+                    continue;
+                }
 
                 _logger.Log(LogType.Info, $"Message from [{message.GetSenderName()}]: {message.GetMessageText()}");
             }
@@ -122,11 +148,22 @@ public class Chat
         {
             Thread.Sleep(50);
         }
+        
+        if (!_isInSession)
+        {
+            ConnectToUser();
+        }
+    
+        while (!_isInSession)
+        {
+            Thread.Sleep(50);
+        }
+        
         try
         {
             while (_isSending)
             {
-                _logger.Log(LogType.Info, $"Enter message to broadcast: ");
+                Console.WriteLine("\nEnter message: ");
 
                 string messageText = Console.ReadLine();
                 
@@ -134,7 +171,7 @@ public class Chat
                 
                 if (string.IsNullOrWhiteSpace(messageText)) continue;
 
-                SendMessage(MessageFactory.CreateBroadcast(_username, messageText));
+                SendMessage(MessageFactory.CreateUserMessage(_username, _connectedToUsername, messageText));
             }
         }
         catch (Exception e)
