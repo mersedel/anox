@@ -15,7 +15,8 @@ public static class MessageFactory
             { MessageErrorType.ServerInternalError,    "Server internal error." },
             { MessageErrorType.ReceiverNotFound,       "No user online with name: {0}" },
             { MessageErrorType.NameAlreadyTaken,       "Name already taken." },
-            { MessageErrorType.InvalidUsername,        "Invalid username." }
+            { MessageErrorType.InvalidUsername,        "Invalid username." },
+            { MessageErrorType.AlreadyInSession,       "User already in session."}
         };
 
     
