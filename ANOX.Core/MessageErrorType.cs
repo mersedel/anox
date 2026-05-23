@@ -9,5 +9,6 @@ public enum MessageErrorType
     ServerInternalError = 4,
     ReceiverNotFound = 5,
     NameAlreadyTaken = 6,
-    InvalidUsername = 7
+    InvalidUsername = 7,
+    AlreadyInSession = 8
 }
