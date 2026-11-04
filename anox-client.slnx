@@ -1,5 +1,0 @@
-<Solution>
-  <Project Path="ANOX.Client/ANOX.Client.csproj" />
-  <Project Path="ANOX.Core/ANOX.Core.csproj" />
-  <Project Path="ANOX.Logger/ANOX.Logger.csproj" />
-</Solution>

@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/apps/">
+    <Project Path="ANOX.Client/ANOX.Client.csproj" />
+    <Project Path="ANOX.Server/ANOX.Server.csproj" />
+  </Folder>
+  <Folder Name="/libs/">
+    <Project Path="ANOX.Core/ANOX.Core.csproj" />
+    <Project Path="ANOX.Logger/ANOX.Logger.csproj" />
+  </Folder>
+</Solution>
