@@ -1,96 +1,98 @@
 # ANOX
 
-Консольний чат клієнт–сервер на C# (.NET 10). Користувачі реєструються під іменем, надсилають один одному запити на чат і переписуються в приватних сесіях один на один.
+**English** · [Українська](README.uk.md)
 
-## Структура
+A console client–server chat in C# (.NET 10). Users register with a name, send each other chat requests and talk in private one-to-one sessions.
 
-| Проєкт | Що робить |
+## Projects
+
+| Project | Purpose |
 |---|---|
-| `ANOX.Server` | TCP-сервер: реєстрація, сесії, запити на чат, серверні команди |
-| `ANOX.Client` | Консольний клієнт |
-| `ANOX.Core` | Спільний протокол: типи повідомлень, серіалізація, валідація |
-| `ANOX.Logger` | Логування в консоль і файл |
+| `ANOX.Server` | TCP server: registration, sessions, chat requests, server commands |
+| `ANOX.Client` | Console client |
+| `ANOX.Core` | Shared protocol: message types, serialization, validation |
+| `ANOX.Logger` | Console and file logging |
 
-## Запуск
+## Getting started
 
-Потрібен [.NET 10 SDK](https://dotnet.microsoft.com/download).
+Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 
 ```bash
 dotnet build anox.slnx
 ```
 
-### Сервер
+### Server
 
 ```bash
 dotnet run --project ANOX.Server
 ```
 
-Під час першого запуску поряд з виконуваним файлом створюється `server.json` зі значеннями за замовчуванням. Шлях до іншого файлу можна передати так: `--config <path>`.
+On first start, a `server.json` with default settings is created next to the executable. Use `--config <path>` to load a different file.
 
-### Клієнт
+### Client
 
 ```bash
 dotnet run --project ANOX.Client -- 192.168.0.10:5656
 ```
 
-Звідки клієнт бере адресу сервера (перше знайдене):
-1. Аргументи: `Client <host>[:port]` або `Client <host> <port>`
-2. `client.json` поряд з виконуваним файлом
-3. Запит при старті. Введена адреса зберігається в `client.json`.
+The client takes the server address from the first source available:
+1. Arguments: `Client <host>[:port]` or `Client <host> <port>`
+2. `client.json` next to the executable
+3. A prompt at startup. The address you enter is saved to `client.json`.
 
-## Конфіг сервера (`server.json`)
+## Server configuration (`server.json`)
 
-| Параметр | За замовчуванням | Опис |
+| Setting | Default | Description |
 |---|---|---|
-| `Host` | `0.0.0.0` | IP, на якому слухати (`0.0.0.0` означає всі інтерфейси) |
-| `Port` | `5656` | Порт |
-| `AdminPasswordHash` | *(порожньо)* | Хеш пароля для `/login`; якщо порожньо, адмінка вимкнена |
-| `MaxLoginAttempts` | `5` | Скільки разів можна ввести неправильний пароль до блокування |
-| `LoginLockoutSeconds` | `60` | Тривалість блокування (рахується по IP) |
-| `InviteTimeoutSeconds` | `60` | Через скільки запит на чат стає недійсним |
-| `InviteSameUserCooldownSeconds` | `15` | Пауза перед повторним запитом тій самій людині |
-| `InviteRateWindowSeconds` | `60` | Вікно для ліміту запитів |
-| `MaxInvitesPerWindow` | `5` | Максимум запитів на чат за це вікно |
-| `MaxMessageLength` | `2000` | Максимальна довжина повідомлення в символах |
-| `LogFilePath` | `logs/server.log` | Файл логів; якщо порожньо, логи йдуть лише в консоль |
+| `Host` | `0.0.0.0` | IP address to listen on (`0.0.0.0` means all interfaces) |
+| `Port` | `5656` | Port |
+| `AdminPasswordHash` | *(empty)* | Password hash for `/login`; empty disables admin access |
+| `MaxLoginAttempts` | `5` | Wrong passwords allowed before a lockout |
+| `LoginLockoutSeconds` | `60` | Lockout duration (counted per IP address) |
+| `InviteTimeoutSeconds` | `60` | How long a chat request stays valid |
+| `InviteSameUserCooldownSeconds` | `15` | Pause before asking the same user again |
+| `InviteRateWindowSeconds` | `60` | Time window for the request limit |
+| `MaxInvitesPerWindow` | `5` | Maximum chat requests per window |
+| `MaxMessageLength` | `2000` | Maximum message length in characters |
+| `LogFilePath` | `logs/server.log` | Log file; empty means console only |
 
-### Пароль адміна
+### Admin password
 
 ```bash
 dotnet run --project ANOX.Server -- --hash-password
 ```
 
-Команда двічі попросить пароль (символи не відображаються) і виведе хеш (PBKDF2-SHA256). Вставте його в `AdminPasswordHash` і перезапустіть сервер. Сам пароль ніде не зберігається.
+You'll be asked for the password twice (input is hidden), and the command prints its hash (PBKDF2-SHA256). Paste the hash into `AdminPasswordHash` and restart the server. The password itself is never stored.
 
-## Команди клієнта
+## Client commands
 
-| Команда | Опис |
+| Command | Description |
 |---|---|
-| `/help` | Список команд |
-| `/connect <username>` | Надіслати запит на чат |
-| `/accept [username]` | Прийняти запит (ім'я потрібне, лише якщо запитів кілька) |
-| `/decline [username]` | Відхилити запит |
-| `/leave` | Вийти з поточного чату |
-| `/ping` | Затримка до сервера |
-| `/version` | Версії клієнта, сервера та протоколу |
-| `/clear` | Очистити консоль |
-| `/reconnect` | Перепідключитися |
-| `/exit` | Вийти |
-| `//text` | Надіслати повідомлення, що починається з `/` |
+| `/help` | List commands |
+| `/connect <username>` | Send a chat request |
+| `/accept [username]` | Accept a request (the name is needed only when there are several) |
+| `/decline [username]` | Decline a request |
+| `/leave` | Leave the current chat |
+| `/ping` | Latency to the server |
+| `/version` | Client, server and protocol versions |
+| `/clear` | Clear the console |
+| `/reconnect` | Reconnect to the server |
+| `/exit` | Quit |
+| `//text` | Send a message that starts with `/` |
 
-Серверні команди: `/getServerStatus`, `/getServerInfo`, `/getServerTime`. Для адміна (після `/login <пароль>`) також `/getAllUsersNames` і `/getAllUsersAmount`. Будь-яку невідому клієнту команду він пересилає на сервер.
+Server commands: `/getServerStatus`, `/getServerInfo`, `/getServerTime`. Admins (after `/login <password>`) also get `/getAllUsersNames` and `/getAllUsersAmount`. The client forwards any command it doesn't know to the server.
 
-## Протокол
+## Protocol
 
-Кожне повідомлення займає один рядок і закінчується `\n`:
+Each message is a single line ending with `\n`:
 
 ```
 <MessageType>|<sender>|<receiver>|<base64(UTF-8 text)>
 ```
 
-- Імена користувачів: 1–20 символів, лише літери, цифри, `_`, `-` і `.`. Імена `SERVER` і `ALL` зарезервовані.
-- `Register`: ім'я передається в полі sender, версія протоколу клієнта в тексті. Якщо версія не збігається, сервер відповідає `ProtocolMismatch` і закриває з'єднання.
-- `ServerError`: текст має вигляд `<код MessageErrorType>|<опис>`.
-- Поточна версія протоколу: `ProtocolInfo.Version` в `ANOX.Core`. Її треба збільшувати при кожній несумісній зміні. Версія застосунку задана в `Directory.Build.props`.
+- Usernames: 1–20 characters; only letters, digits, `_`, `-` and `.`. `SERVER` and `ALL` are reserved.
+- `Register`: the username goes in the sender field and the client's protocol version in the text. If the versions don't match, the server replies with `ProtocolMismatch` and closes the connection.
+- `ServerError`: the text is `<MessageErrorType code>|<description>`.
+- The current protocol version is `ProtocolInfo.Version` in `ANOX.Core`. Bump it on every incompatible change. The application version is set in `Directory.Build.props`.
 
-> ⚠️ Трафік не шифрується. Для роботи через інтернет потрібен TLS (запланований).
+> ⚠️ Traffic is not encrypted. Running over the internet needs TLS (planned).
