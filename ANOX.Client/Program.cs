@@ -6,7 +6,7 @@ class Program
 {
     /// <summary>
     /// Server address, first match wins:
-    /// 1. arguments: Client &lt;host&gt; [port]  or  Client &lt;host:port&gt;
+    /// 1. arguments: AnoxClient &lt;host&gt; [port]  or  AnoxClient &lt;host:port&gt;
     /// 2. client.json (saved after the first successful prompt)
     /// 3. asked at start
     /// </summary>

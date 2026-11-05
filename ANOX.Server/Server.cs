@@ -51,7 +51,7 @@ class Server
 
         if (string.IsNullOrEmpty(config.AdminPasswordHash))
         {
-            logger.Log(LogType.Warning, "Admin login is disabled. Generate a hash with \"Server --hash-password\" and put it into AdminPasswordHash.");
+            logger.Log(LogType.Warning, "Admin login is disabled. Generate a hash with \"AnoxServer --hash-password\" and put it into AdminPasswordHash.");
         }
         else if (!PasswordHasher.IsValidHash(config.AdminPasswordHash))
         {

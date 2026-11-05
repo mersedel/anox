@@ -36,7 +36,7 @@ dotnet run --project ANOX.Client -- 192.168.0.10:5656
 ```
 
 Звідки клієнт бере адресу сервера (перше знайдене):
-1. Аргументи: `Client <host>[:port]` або `Client <host> <port>`
+1. Аргументи: `AnoxClient <host>[:port]` або `AnoxClient <host> <port>`
 2. `client.json` поряд з виконуваним файлом
 3. Запит при старті. Введена адреса зберігається в `client.json`.
 

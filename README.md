@@ -36,7 +36,7 @@ dotnet run --project ANOX.Client -- 192.168.0.10:5656
 ```
 
 The client takes the server address from the first source available:
-1. Arguments: `Client <host>[:port]` or `Client <host> <port>`
+1. Arguments: `AnoxClient <host>[:port]` or `AnoxClient <host> <port>`
 2. `client.json` next to the executable
 3. A prompt at startup. The address you enter is saved to `client.json`.
 
