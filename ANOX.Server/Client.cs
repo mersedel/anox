@@ -1,6 +1,5 @@
 using System;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading;
 using ANOX.Core;
 using ANOX.Logger;
@@ -11,142 +10,191 @@ public class Client
 {
     private ILogger _logger;
 
+    private readonly object _disconnectLock = new();
+
     private bool _isConnected;
-    
-    private bool _isRegistered;
-    
-    private byte[] _receiveBuffer = new byte[1024];
-    
+
+    private volatile bool _isRegistered;
+
     private TcpClient _tcpClient;
     private NetworkStream _stream;
-    
-    private bool _isReceiving = true;
+    private MessageChannel _channel;
 
-    private string _clientUsername;
-    public string Username => _clientUsername;
-    
+    private string? _clientUsername;
+
+    /// <summary>Empty until the client is registered.</summary>
+    public string Username => _clientUsername ?? string.Empty;
+    public bool IsRegistered => _isRegistered;
+
+    private string DisplayName => _clientUsername ?? "unregistered";
+
     public Client(TcpClient tcpClient, ILogger logger)
     {
         _tcpClient = tcpClient;
         _stream = tcpClient.GetStream();
+        _channel = new MessageChannel(_stream);
         _logger = logger;
     }
 
     public void Start()
     {
         _isConnected = true;
-        
+
         Thread thread = new Thread(ReceiveLoop);
 
         thread.IsBackground = true;
-        
+
         thread.Start();
     }
 
-    private void RegisterClient(string username)
+    private void HandleRegister(Message message)
     {
+        string username = message.GetMessageText().Trim();
+
+        // On failure keep the connection open: the client can retry with another name.
+        if (!MessageValidator.IsValidUsername(username))
+        {
+            // Don't echo the rejected name back: it may contain '|' and break the protocol.
+            SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.InvalidUsername, string.Empty));
+            _logger.Log(LogType.Warning, $"Rejected invalid username [{username}]");
+            return;
+        }
+
+        if (!ClientManager.TryAddClient(username, this))
+        {
+            SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.NameAlreadyTaken, username));
+            _logger.Log(LogType.Warning, $"Username [{username}] already taken, waiting for another name");
+            return;
+        }
+
         _clientUsername = username;
-        
-        ClientManager.AddClient(_clientUsername, this);
         _isRegistered = true;
         _logger.Log(LogType.Info, $"Client registered with name [{Username}]");
-        
-        SendMessage(MessageFactory.CreateSystemMessage(Username,$"Registered successfully! Welcome, {Username} "));
+
+        SendMessage(MessageFactory.CreateSystemMessage(Username, $"Registered successfully! Welcome, {Username} "));
+    }
+
+    private void HandleSessionConnectRequest(Message message)
+    {
+        string targetName = message.GetReceiverName();
+        Client? clientB = ClientManager.GetClient(targetName);
+
+        if (clientB == null)
+        {
+            SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.ReceiverNotFound, Username, targetName));
+            return;
+        }
+
+        if (!SessionManager.TryAddSession(this, clientB, out MessageErrorType error))
+        {
+            SendMessage(MessageFactory.CreateErrorMessage(error, Username, targetName));
+            return;
+        }
+
+        SendMessage(MessageFactory.CreateSessionConnectResponse(Username, clientB.Username,
+            $"Created session with {clientB.Username}"));
+        clientB.SendMessage(MessageFactory.CreateSessionConnectResponse(clientB.Username, Username,
+            $"Created session with {Username}"));
+
+        _logger.Log(LogType.Info, $"Session created: [{Username}] <-> [{clientB.Username}]");
+    }
+
+    private void HandleSessionLeave()
+    {
+        ChatSession? session = SessionManager.RemoveSession(Username);
+
+        if (session == null)
+        {
+            SendMessage(MessageFactory.CreateCommandResponse(Username, "You are not in a session."));
+            return;
+        }
+
+        Client peer = session.GetPeer(this);
+
+        // Both sides get SessionEnded with the leaver's name; the leaver recognises its own name.
+        peer.SendMessage(MessageFactory.CreateSessionEnded(peer.Username, Username));
+        SendMessage(MessageFactory.CreateSessionEnded(Username, Username));
+
+        _logger.Log(LogType.Info, $"[{Username}] left the session with [{peer.Username}]");
     }
 
     private void ReceiveLoop()
     {
         try
         {
-            while (_isReceiving)
+            while (true)
             {
-                int bytesRead = _stream.Read(_receiveBuffer);
+                string? receivedSerializedMessage = _channel.ReadSerialized();
 
-                if (bytesRead == 0)
+                if (receivedSerializedMessage == null)
                 {
                     break;
                 }
-                
-                string receivedSerializedMessage = Encoding.UTF8.GetString(_receiveBuffer, 0, bytesRead);
 
                 if (!MessageValidator.IsValid(receivedSerializedMessage))
                 {
-                    _logger.Log(LogType.Warning, $"Invalid message received from [{Username ?? "unregistered"}]");
+                    _logger.Log(LogType.Warning, $"Invalid message received from [{DisplayName}]");
                     continue;
                 }
-                
+
                 Message message = MessageParser.DeserializeClientMessage(receivedSerializedMessage);
 
-                if (!_isRegistered && message.GetMessageType() == MessageType.Register)
+                if (!_isRegistered)
                 {
-                    if (ClientManager.ContainsClient(message.GetSenderName()))
+                    if (message.GetMessageType() == MessageType.Register)
                     {
-                        SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.NameAlreadyTaken, Username));
-                        
-                        _logger.Log(LogType.Error, $"Username [{message.GetSenderName()}] already taken, sending ErrorMessage to client");
-                        return;
+                        HandleRegister(message);
                     }
-                    RegisterClient(message.GetMessageText());
+                    else
+                    {
+                        _logger.Log(LogType.Warning, $"[{message.GetMessageType()}] from unregistered client ignored");
+                    }
+                    continue;
                 }
-                else
+
+                switch (message.GetMessageType())
                 {
-                    switch (message.GetMessageType())
-                    {
-                        case MessageType.SessionConnectRequest:
-                            Client clientB = ClientManager.GetClient(message.GetReceiverName());
-                            
-                            if (clientB == null)
-                            {
-                                SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.ReceiverNotFound, Username));
-                                break;
-                            }
-                            
-                            string errorReason;
-                            
-                            if (SessionManager.TryAddSession(this, clientB, out errorReason))
-                            {
-                                SendMessage(MessageFactory.CreateSessionConnectResponse(Username, message.GetReceiverName(), 
-                                    $"Created session with {message.GetReceiverName()}"));
-                                clientB.SendMessage(MessageFactory.CreateSessionConnectResponse(message.GetReceiverName(), Username, 
-                                    $"Created session with {Username}"));
-                            }
-                            else
-                            {
-                                if (errorReason == "Receiver not found!")
-                                {
-                                    SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.ReceiverNotFound,
-                                        Username));
-                                }
-                                if (errorReason == "User already in session!")
-                                {
-                                    SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.AlreadyInSession,
-                                        Username));
-                                }
-                            }
-                            break;
-            
-                        case MessageType.UserMessage:
-                            ChatSession session = SessionManager.GetSession(Username);
-                            if (session != null)
-                                session.Route(message, Username);
-                            else
-                                _logger.Log(LogType.Warning, $"[{Username}] sent UserMessage but has no active session");
-                            break;
-            
-                        case MessageType.Broadcast:
-                            // nothing for now
-                            break;
-            
-                        default:
-                            _logger.Log(LogType.Warning, $"Unexpected message type [{message.GetMessageType()}] from [{Username}]");
-                            break;
-                    }
+                    case MessageType.SessionConnectRequest:
+                        HandleSessionConnectRequest(message);
+                        break;
+
+                    case MessageType.UserMessage:
+                        ChatSession? session = SessionManager.GetSession(Username);
+                        if (session != null)
+                            session.Route(message, Username);
+                        else
+                            _logger.Log(LogType.Warning, $"[{Username}] sent UserMessage but has no active session");
+                        break;
+
+                    case MessageType.SessionLeave:
+                        HandleSessionLeave();
+                        break;
+
+                    case MessageType.Ping:
+                        SendMessage(MessageFactory.CreatePong(Username, message.GetMessageText()));
+                        break;
+
+                    case MessageType.CommandRequest:
+                        _logger.Log(LogType.Info, $"[{Username}] executed command: /{message.GetMessageText()}");
+                        CommandManager.Execute(this, message.GetMessageText());
+                        break;
+
+                    case MessageType.Broadcast:
+                        // nothing for now
+                        break;
+
+                    default:
+                        _logger.Log(LogType.Warning, $"Unexpected message type [{message.GetMessageType()}] from [{Username}]");
+                        break;
                 }
             }
         }
         catch (Exception e)
         {
-            _logger.Log(LogType.Error, $"Error in Receive() -> {e.Message}");
+            if (_isConnected)
+            {
+                _logger.Log(LogType.Error, $"Error in Receive() from [{DisplayName}] -> {e.Message}");
+            }
         }
         finally
         {
@@ -154,16 +202,14 @@ public class Client
         }
     }
 
+    /// <summary>Thread-safe: other clients' threads send to this client too.</summary>
     public void SendMessage(Message message)
     {
         try
         {
-            string serializedMessage = MessageParser.SerializeMessage(message);
-            byte[] bytes = Encoding.UTF8.GetBytes(serializedMessage);
-            
-            _stream.Write(bytes);
+            _channel.Send(message);
         }
-        catch (Exception e)
+        catch (Exception)
         {
             Disconnect();
         }
@@ -171,19 +217,24 @@ public class Client
 
     private void Disconnect()
     {
-        if (!_isConnected) return;
-        _isConnected = false;
-        
-        _isReceiving = false;
+        lock (_disconnectLock)
+        {
+            if (!_isConnected) return;
+            _isConnected = false;
+        }
+
         _stream.Close();
         _tcpClient.Close();
-        
+
         if (_isRegistered)
         {
             ClientManager.RemoveClient(Username);
-            SessionManager.RemoveSession(Username);
+
+            ChatSession? session = SessionManager.RemoveSession(Username);
+            Client? peer = session?.GetPeer(this);
+            peer?.SendMessage(MessageFactory.CreateSessionEnded(peer.Username, Username));
         }
-        
-        _logger.Log(LogType.Info, $"Client [{Username ?? "unregistered"}] disconnected!");
+
+        _logger.Log(LogType.Info, $"Client [{DisplayName}] disconnected!");
     }
 }

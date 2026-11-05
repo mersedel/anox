@@ -1,6 +1,6 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading;
 using ANOX.Core;
 using ANOX.Logger;
@@ -10,191 +10,467 @@ namespace ANOX.Client;
 public class Chat
 {
     private ILogger _logger = new ConsoleLogger();
-    
-    private byte[] _receiveBuffer = new byte[1024];
-    
-    private TcpClient _tcpClient;
-    private NetworkStream _stream;
 
-    private bool _isConnected = false;
-    
-    private bool _isRegistered = false;
+    private readonly object _connectionLock = new();
+    private readonly ManualResetEvent _exitEvent = new(false);
 
-    private bool _isInSession = false;
-    private bool _isReceiving = true;
-    private bool _isSending = true;
-    
-    private string _username;
-    private string _connectedToUsername;
-    
+    private readonly ClientCommandManager _commandManager;
+
+    private TcpClient? _tcpClient;
+    private MessageChannel? _channel;
+
+    private volatile bool _isConnected = false;
+    private volatile bool _isRegistered = false;
+    private volatile bool _isInSession = false;
+    private volatile bool _isExiting = false;
+
+    // Set when the server rejected our name: the next input line is treated as a new username.
+    private volatile bool _isAwaitingUsername = false;
+
+    private string _username = string.Empty;
+    private string? _connectedToUsername;
+
     private string _serverIp;
     private int _port;
+
+    public bool IsConnected => _isConnected;
+    public bool IsInSession => _isInSession;
+    public string Username => _username;
+    public string? ConnectedToUsername => _connectedToUsername;
 
     public Chat(string serverIp, int port)
     {
         _serverIp = serverIp;
         _port = port;
+
+        _commandManager = new ClientCommandManager(this);
     }
 
     public void Start()
     {
-        _tcpClient = new TcpClient();
-        _tcpClient.Connect(_serverIp, _port);
-        _isConnected = true;
+        AskUsername();
 
-        _stream = _tcpClient.GetStream();
-        
-        if (!_isRegistered)
+        Connect();
+
+        Thread inputThread = new Thread(InputLoop);
+        inputThread.IsBackground = true;
+        inputThread.Start();
+
+        _exitEvent.WaitOne();
+    }
+
+    private void AskUsername()
+    {
+        while (true)
         {
-            RegisterClient();
+            Console.WriteLine("Enter Username: ");
+            string? input = Console.ReadLine();
+
+            if (input == null) Environment.Exit(0);
+
+            if (TrySetUsername(input)) break;
         }
-        
-        
-        Thread receiveThread = new Thread(ReceiveLoop);
+
+        Console.Clear();
+        SetTitle($"ANOX - {_username}");
+    }
+
+    private void Connect()
+    {
+        TcpClient tcpClient = new TcpClient();
+
+        try
+        {
+            tcpClient.Connect(_serverIp, _port);
+        }
+        catch (Exception e)
+        {
+            tcpClient.Dispose();
+            _logger.Log(LogType.Error, $"Can't connect to server: {e.Message}. Use /reconnect to try again.");
+            return;
+        }
+
+        lock (_connectionLock)
+        {
+            _tcpClient = tcpClient;
+            _channel = new MessageChannel(tcpClient.GetStream());
+
+            _isConnected = true;
+            _isRegistered = false;
+            _isInSession = false;
+            _isAwaitingUsername = false;
+            _connectedToUsername = null;
+        }
+
+        MessageChannel channel = _channel;
+
+        Thread receiveThread = new Thread(() => ReceiveLoop(tcpClient, channel));
         receiveThread.IsBackground = true;
         receiveThread.Start();
 
-        Thread sendThread = new Thread(SendLoop);
-        sendThread.IsBackground = true;
-        sendThread.Start();
-        
-        Thread.Sleep(Timeout.Infinite);
-    }
-
-    private void RegisterClient()
-    {
-        Console.WriteLine("Enter Username: ");
-
-        _username = Console.ReadLine();
-        
         SendMessage(MessageFactory.CreateRegisterMessage(_username));
-        
-        Console.Clear();
     }
 
-    private void ConnectToUser()
+    public void Reconnect()
     {
-        if (_isInSession) return;
-    
-        Console.WriteLine("\nEnter username to connect to: ");
-        _connectedToUsername = Console.ReadLine();
-        SendMessage(MessageFactory.CreateSessionConnectRequest(_username, _connectedToUsername));
-    
-        while (!_isInSession)
-        {
-            Thread.Sleep(50);
-        }
+        Disconnect(showHint: false);
+        _logger.Log(LogType.Info, "Reconnecting...");
+        Connect();
+    }
+
+    public void Exit()
+    {
+        _isExiting = true;
+        Disconnect(showHint: false);
+        _exitEvent.Set();
+    }
+
+    public void RequestSession(string username)
+    {
+        SendMessage(MessageFactory.CreateSessionConnectRequest(_username, username));
+    }
+
+    public void LeaveSession()
+    {
+        SendMessage(MessageFactory.CreateSessionLeave(_username));
+    }
+
+    /// <summary>Sends the current timestamp; the server echoes it back, so the round trip needs no stored state.</summary>
+    public void SendPing()
+    {
+        SendMessage(MessageFactory.CreatePing(_username, Stopwatch.GetTimestamp().ToString()));
+    }
+
+    public void SendCommandRequest(string commandText)
+    {
+        SendMessage(MessageFactory.CreateCommandRequest(_username, commandText));
     }
 
     private void SendMessage(Message message)
     {
-        string serializedMessage = MessageParser.SerializeMessage(message);
-        
-        _stream.Write(Encoding.UTF8.GetBytes(serializedMessage));
+        MessageChannel? channel = _channel;
+
+        if (!_isConnected || channel == null)
+        {
+            _logger.Log(LogType.Warning, "Not connected to the server. Use /reconnect.");
+            return;
+        }
+
+        try
+        {
+            channel.Send(message);
+        }
+        catch (Exception e)
+        {
+            _logger.Log(LogType.Error, $"Failed to send message: {e.Message}");
+            Disconnect();
+        }
     }
 
-    private void ReceiveLoop()
+    private void InputLoop()
+    {
+        while (!_isExiting)
+        {
+            string? input = Console.ReadLine();
+
+            if (input == null)
+            {
+                // stdin closed (e.g. Ctrl+Z / Ctrl+D)
+                Exit();
+                break;
+            }
+
+            if (string.IsNullOrWhiteSpace(input)) continue;
+
+            try
+            {
+                HandleInput(input);
+            }
+            catch (Exception e)
+            {
+                _logger.Log(LogType.Error, $"Error while handling input: {e.Message}");
+            }
+        }
+    }
+
+    private void HandleInput(string input)
+    {
+        // "//text" sends a regular message that starts with '/'
+        if (input.StartsWith("//"))
+        {
+            SendUserMessage(input.Substring(1), input);
+            return;
+        }
+
+        if (input.StartsWith('/'))
+        {
+            _commandManager.Handle(input);
+            return;
+        }
+
+        if (_isAwaitingUsername)
+        {
+            SubmitUsername(input);
+            return;
+        }
+
+        SendUserMessage(input, input);
+    }
+
+    private void SubmitUsername(string input)
+    {
+        if (!TrySetUsername(input))
+        {
+            Console.WriteLine("Enter another username: ");
+            return;
+        }
+
+        _isAwaitingUsername = false;
+        SendMessage(MessageFactory.CreateRegisterMessage(_username));
+    }
+
+    /// <summary>Checks the name locally first; the server validates it again.</summary>
+    private bool TrySetUsername(string input)
+    {
+        string name = input.Trim();
+
+        if (!MessageValidator.IsValidUsername(name))
+        {
+            Console.WriteLine($"Invalid username. Use 1-{MessageValidator.MaxUsernameLength} letters, digits, '_', '-' or '.'.");
+            return false;
+        }
+
+        _username = name;
+        return true;
+    }
+
+    /// <param name="text">Message to send.</param>
+    /// <param name="rawInput">The line as the user typed it (to erase its echo).</param>
+    private void SendUserMessage(string text, string rawInput)
+    {
+        if (!_isConnected)
+        {
+            Console.WriteLine("Not connected to the server. Use /reconnect.");
+            return;
+        }
+
+        if (!_isInSession || _connectedToUsername == null)
+        {
+            Console.WriteLine("No active session. Use /connect <username>.");
+            return;
+        }
+
+        SendMessage(MessageFactory.CreateUserMessage(_username, _connectedToUsername, text));
+        ShowOwnMessage(text, rawInput);
+    }
+
+    /// <summary>
+    /// Replaces the line the console echoed while typing with "[time] me: text",
+    /// so own messages look the same as incoming ones.
+    /// </summary>
+    private void ShowOwnMessage(string text, string rawInput)
     {
         try
         {
-            while (_isReceiving)
+            int width = Console.BufferWidth;
+            int lines = Math.Max(1, (rawInput.Length + width - 1) / width);
+            int top = Math.Max(0, Console.CursorTop - lines);
+
+            Console.SetCursorPosition(0, top);
+            Console.Write(new string(' ', width * lines));
+            Console.SetCursorPosition(0, top);
+        }
+        catch
+        {
+            // Output is redirected or the terminal doesn't support cursor moves: just print below.
+        }
+
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {_username}: {text}");
+    }
+
+    private void ReceiveLoop(TcpClient tcpClient, MessageChannel channel)
+    {
+        try
+        {
+            while (true)
             {
-                int bytesRead = _stream.Read(_receiveBuffer);
+                string? serializedMessage = channel.ReadSerialized();
 
-                if (bytesRead == 0)
+                if (serializedMessage == null)
                 {
                     break;
                 }
 
-                string serializedMessage = Encoding.UTF8.GetString(_receiveBuffer, 0, bytesRead);
-
-                Message message = MessageParser.DeserializeClientMessage(serializedMessage);
-
-                if (message.GetMessageType() == MessageType.ServerError)
+                if (!MessageValidator.IsValid(serializedMessage))
                 {
-                    _logger.Log(LogType.Error, $"Error from server: {message.GetMessageText()}");
-                    break;
-                }
-
-                if (message.GetMessageType() == MessageType.SystemInfo && !_isRegistered)
-                {
-                    _isRegistered = true;
-                }
-                
-                if (message.GetMessageType() == MessageType.SessionConnectResponse)
-                {
-                    _connectedToUsername = message.GetReceiverName();
-                    _isInSession = true;
-                    _logger.Log(LogType.Info, $"Peer session! Connected with user: {_connectedToUsername}");
+                    _logger.Log(LogType.Warning, "Invalid message received from server, ignored.");
                     continue;
                 }
 
-                _logger.Log(LogType.Info, $"Message from [{message.GetSenderName()}]: {message.GetMessageText()}");
+                Message message = MessageParser.DeserializeClientMessage(serializedMessage);
+
+                switch (message.GetMessageType())
+                {
+                    case MessageType.ServerError:
+                        _logger.Log(LogType.Error, $"Error from server: {message.GetMessageText()}");
+
+                        // An error before registration means the name was rejected: ask for another one.
+                        if (!_isRegistered)
+                        {
+                            _isAwaitingUsername = true;
+                            Console.WriteLine("Enter another username: ");
+                        }
+                        break;
+
+                    case MessageType.SystemInfo:
+                        _logger.Log(LogType.Info, message.GetMessageText());
+
+                        if (!_isRegistered)
+                        {
+                            _isRegistered = true;
+                            Console.WriteLine("Type /connect <username> to start chatting or /help for a list of commands.");
+                        }
+                        break;
+
+                    case MessageType.SessionConnectResponse:
+                        _connectedToUsername = message.GetReceiverName();
+                        _isInSession = true;
+                        ShowSessionStarted(_connectedToUsername);
+                        break;
+
+                    case MessageType.CommandResponse:
+                        Console.WriteLine(message.GetMessageText());
+                        break;
+
+                    case MessageType.SessionEnded:
+                        string? peer = _connectedToUsername;
+                        _isInSession = false;
+                        _connectedToUsername = null;
+                        if (peer != null) ShowSessionEnded(peer);
+
+                        string leaver = message.GetMessageText();
+                        Console.WriteLine(leaver == _username
+                            ? "You left the chat. Use /connect <username> to start a new one."
+                            : $"{leaver} left the chat. Use /connect <username> to start a new one.");
+                        break;
+
+                    case MessageType.Pong:
+                        if (long.TryParse(message.GetMessageText(), out long sentAt))
+                        {
+                            TimeSpan rtt = Stopwatch.GetElapsedTime(sentAt);
+                            Console.WriteLine($"Pong from server: {rtt.TotalMilliseconds:0.#} ms");
+                        }
+                        break;
+
+                    case MessageType.UserMessage:
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message.GetSenderName()}: {message.GetMessageText()}");
+                        break;
+
+                    default:
+                        _logger.Log(LogType.Info, $"Message from [{message.GetSenderName()}]: {message.GetMessageText()}");
+                        break;
+                }
             }
         }
         catch (Exception e)
         {
-            _logger.Log(LogType.Error, $"Error in ReceiveLoop(): {e.Message}");
+            // Reading from a socket we closed ourselves (Disconnect/Reconnect) is expected.
+            if (IsCurrentConnection(tcpClient))
+            {
+                _logger.Log(LogType.Error, $"Error in ReceiveLoop(): {e.Message}");
+            }
         }
         finally
         {
-            Disconnect();
+            Disconnect(tcpClient);
         }
     }
 
-    private void SendLoop()
+    private bool IsCurrentConnection(TcpClient tcpClient)
     {
-        while (!_isRegistered) 
+        lock (_connectionLock)
         {
-            Thread.Sleep(50);
+            return _isConnected && ReferenceEquals(_tcpClient, tcpClient);
         }
-        
-        if (!_isInSession)
-        {
-            ConnectToUser();
-        }
-    
-        while (!_isInSession)
-        {
-            Thread.Sleep(50);
-        }
-        
+    }
+
+    private void ShowSessionStarted(string peer)
+    {
+        SetTitle($"ANOX - {_username} <-> {peer}");
+
+        Console.WriteLine();
+        Console.WriteLine($"===== Chat with {peer} =====");
+        Console.WriteLine("Type a message and press Enter. /help for commands.");
+    }
+
+    private void ShowSessionEnded(string peer)
+    {
+        SetTitle($"ANOX - {_username}");
+
+        Console.WriteLine($"===== Chat with {peer} ended =====");
+    }
+
+    private static void SetTitle(string title)
+    {
         try
         {
-            while (_isSending)
-            {
-                Console.WriteLine("\nEnter message: ");
-
-                string messageText = Console.ReadLine();
-                
-                if (!_isSending) break;
-                
-                if (string.IsNullOrWhiteSpace(messageText)) continue;
-
-                SendMessage(MessageFactory.CreateUserMessage(_username, _connectedToUsername, messageText));
-            }
+            Console.Title = title;
         }
-        catch (Exception e)
+        catch
         {
-            _logger.Log(LogType.Error, $"Error in SendLoop(): {e.Message}");
-        }
-        finally
-        {
-            Disconnect();
+            // Not every terminal supports changing the title.
         }
     }
 
-    private void Disconnect()
+    private void Disconnect(bool showHint = true)
     {
-        if (!_isConnected) return;
-        _isConnected = false;
-        
-        _isReceiving = false;
-        _isSending = false;
-        
-        _stream.Close();
-        _tcpClient.Close();
-        
-        _logger.Log(LogType.Info, $"Disconnected from server!");
+        TcpClient? current;
+
+        lock (_connectionLock)
+        {
+            current = _tcpClient;
+        }
+
+        if (current != null)
+        {
+            Disconnect(current, showHint);
+        }
+    }
+
+    /// <summary>
+    /// Closes the given connection only if it is still the current one,
+    /// so a receive thread of an old connection can't close a new one after /reconnect.
+    /// </summary>
+    private void Disconnect(TcpClient tcpClient, bool showHint = true)
+    {
+        string? endedSessionWith;
+
+        lock (_connectionLock)
+        {
+            if (!_isConnected || !ReferenceEquals(_tcpClient, tcpClient)) return;
+
+            endedSessionWith = _isInSession ? _connectedToUsername : null;
+
+            _isConnected = false;
+            _isRegistered = false;
+            _isInSession = false;
+            _isAwaitingUsername = false;
+            _connectedToUsername = null;
+
+            // Closing the socket unblocks the receive thread's ReadLine; the channel itself holds nothing else.
+            _tcpClient?.Close();
+
+            _channel = null;
+            _tcpClient = null;
+        }
+
+        if (endedSessionWith != null)
+        {
+            ShowSessionEnded(endedSessionWith);
+        }
+
+        _logger.Log(LogType.Info, showHint && !_isExiting
+            ? "Disconnected from server! Use /reconnect to connect again or /exit to quit."
+            : "Disconnected from server!");
     }
 }

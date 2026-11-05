@@ -10,11 +10,12 @@ public static class ClientManager
     
     private static Dictionary<string, Client> _allClients = new();
 
-    public static void AddClient(string username, Client session)
+    /// <summary>Atomic check-and-add: returns false if the name is already taken.</summary>
+    public static bool TryAddClient(string username, Client client)
     {
         lock (_lock)
         {
-            _allClients.Add(username, session);
+            return _allClients.TryAdd(username, client);
         }
     }
 
@@ -26,12 +27,31 @@ public static class ClientManager
         }
     }
 
-    public static Client GetClient(string username)
+    public static Client? GetClient(string username)
     {
         lock (_lock)
         {
-            _allClients.TryGetValue(username, out Client client);
+            _allClients.TryGetValue(username, out Client? client);
             return client;
+        }
+    }
+
+    public static int ClientCount
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _allClients.Count;
+            }
+        }
+    }
+
+    public static List<string> GetAllUsernames()
+    {
+        lock (_lock)
+        {
+            return _allClients.Keys.OrderBy(name => name).ToList();
         }
     }
 

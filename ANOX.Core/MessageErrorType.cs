@@ -10,5 +10,6 @@ public enum MessageErrorType
     ReceiverNotFound = 5,
     NameAlreadyTaken = 6,
     InvalidUsername = 7,
-    AlreadyInSession = 8
+    AlreadyInSession = 8,
+    CannotConnectToSelf = 9
 }

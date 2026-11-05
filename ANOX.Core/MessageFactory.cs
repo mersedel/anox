@@ -15,8 +15,9 @@ public static class MessageFactory
             { MessageErrorType.ServerInternalError,    "Server internal error." },
             { MessageErrorType.ReceiverNotFound,       "No user online with name: {0}" },
             { MessageErrorType.NameAlreadyTaken,       "Name already taken." },
-            { MessageErrorType.InvalidUsername,        "Invalid username." },
-            { MessageErrorType.AlreadyInSession,       "User already in session."}
+            { MessageErrorType.InvalidUsername,        "Invalid username. Use 1-20 letters, digits, '_', '-' or '.'." },
+            { MessageErrorType.AlreadyInSession,       "User already in session." },
+            { MessageErrorType.CannotConnectToSelf,    "You can't connect to yourself." }
         };
 
     
@@ -40,10 +41,8 @@ public static class MessageFactory
         if (!_errorDictionary.TryGetValue(errorType, out string template))
             template = _errorDictionary[MessageErrorType.Unknown];
 
-        if (argument == null)
-            return template;
-
-        return string.Format(template, argument);
+        // Templates without a placeholder ignore the argument; a missing argument never leaks a raw "{0}".
+        return string.Format(template, argument ?? "unknown");
     }
 
 
@@ -93,11 +92,39 @@ public static class MessageFactory
         return CreateMessage(MessageType.CommandResponse, "SERVER", receiver, text);
     }
 
+    /// <param name="commandText">Command name without the leading '/', followed by its arguments, e.g. "getServerTime".</param>
+    public static Message CreateCommandRequest(string sender, string commandText)
+    {
+        return CreateMessage(MessageType.CommandRequest, sender, "SERVER", commandText);
+    }
+
     public static Message CreateSessionConnectRequest(string sender, string receiver)
     {
         return CreateMessage(MessageType.SessionConnectRequest, sender, receiver, string.Empty);
     }
     
+    /// <param name="peer">The user who left the session; sent as the message text.</param>
+    public static Message CreateSessionEnded(string receiver, string peer)
+    {
+        return CreateMessage(MessageType.SessionEnded, "SERVER", receiver, peer);
+    }
+
+    public static Message CreateSessionLeave(string sender)
+    {
+        return CreateMessage(MessageType.SessionLeave, sender, "SERVER", string.Empty);
+    }
+
+    /// <param name="payload">Opaque data the server echoes back in the Pong (e.g. a send timestamp).</param>
+    public static Message CreatePing(string sender, string payload)
+    {
+        return CreateMessage(MessageType.Ping, sender, "SERVER", payload);
+    }
+
+    public static Message CreatePong(string receiver, string payload)
+    {
+        return CreateMessage(MessageType.Pong, "SERVER", receiver, payload);
+    }
+
     public static Message CreateSessionConnectResponse(string sender, string receiver, string response)
     {
         return CreateMessage(MessageType.SessionConnectResponse, sender, receiver, response);

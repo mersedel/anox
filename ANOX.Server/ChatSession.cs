@@ -16,6 +16,11 @@ public class ChatSession
         _clientB = clientB;
     }
 
+    public Client GetPeer(Client client)
+    {
+        return ReferenceEquals(client, _clientA) ? _clientB : _clientA;
+    }
+
     public void Route(Message message, string senderUsername)
     {
         if (senderUsername == _clientA.Username)
