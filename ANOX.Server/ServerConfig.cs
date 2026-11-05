@@ -15,7 +15,7 @@ public class ServerConfig
     public string Host { get; set; } = "0.0.0.0";
     public int Port { get; set; } = 5656;
 
-    /// <summary>Hash for /login. Empty = admin login disabled. Generate with: Server --hash-password</summary>
+    /// <summary>Hash for /login. Empty = admin login disabled. Generate with: AnoxServer --hash-password</summary>
     public string AdminPasswordHash { get; set; } = string.Empty;
 
     /// <summary>Failed /login attempts allowed before a temporary lockout.</summary>
