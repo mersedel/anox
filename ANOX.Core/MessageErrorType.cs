@@ -11,5 +11,7 @@ public enum MessageErrorType
     NameAlreadyTaken = 6,
     InvalidUsername = 7,
     AlreadyInSession = 8,
-    CannotConnectToSelf = 9
+    CannotConnectToSelf = 9,
+    InviteNotFound = 10,
+    TooManyRequests = 11
 }

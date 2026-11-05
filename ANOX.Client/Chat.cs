@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Threading;
@@ -26,6 +27,9 @@ public class Chat
 
     // Set when the server rejected our name: the next input line is treated as a new username.
     private volatile bool _isAwaitingUsername = false;
+
+    // Users who sent us a chat request that we haven't answered yet.
+    private readonly List<string> _incomingInvites = new();
 
     private string _username = string.Empty;
     private string? _connectedToUsername;
@@ -128,6 +132,72 @@ public class Chat
     public void RequestSession(string username)
     {
         SendMessage(MessageFactory.CreateSessionConnectRequest(_username, username));
+    }
+
+    public List<string> GetIncomingInvites()
+    {
+        lock (_incomingInvites)
+        {
+            return new List<string>(_incomingInvites);
+        }
+    }
+
+    public void AnswerInvite(string requester, bool accept)
+    {
+        lock (_incomingInvites)
+        {
+            _incomingInvites.Remove(requester);
+        }
+
+        SendMessage(MessageFactory.CreateSessionInviteResponse(_username, requester, accept));
+
+        if (!accept)
+        {
+            Console.WriteLine($"Declined the chat request from {requester}.");
+        }
+    }
+
+    private void ClearIncomingInvites()
+    {
+        lock (_incomingInvites)
+        {
+            _incomingInvites.Clear();
+        }
+    }
+
+    private void OnInviteReceived(string requester)
+    {
+        lock (_incomingInvites)
+        {
+            if (!_incomingInvites.Contains(requester)) _incomingInvites.Add(requester);
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($">>> {requester} wants to chat with you. Type /accept or /decline.");
+    }
+
+    private void OnInviteCancelled(string otherUser, string reasonText)
+    {
+        if (!Enum.TryParse(reasonText, out InviteCancelReason reason)) return;
+
+        bool wasIncoming;
+        lock (_incomingInvites)
+        {
+            wasIncoming = _incomingInvites.Remove(otherUser);
+        }
+
+        string text = (wasIncoming, reason) switch
+        {
+            (_, InviteCancelReason.Offline) => $"{otherUser} went offline.",
+            (_, InviteCancelReason.Busy)    => $"{otherUser} is now in another chat.",
+            (true, InviteCancelReason.Expired)   => $"Chat request from {otherUser} expired.",
+            (true, InviteCancelReason.Cancelled) => $"{otherUser} cancelled the chat request.",
+            (false, InviteCancelReason.Declined) => $"{otherUser} declined your chat request.",
+            (false, InviteCancelReason.Expired)  => $"Your chat request to {otherUser} expired.",
+            _ => $"Chat request with {otherUser} cancelled."
+        };
+
+        Console.WriteLine(text);
     }
 
     public void LeaveSession()
@@ -332,7 +402,16 @@ public class Chat
                         }
                         break;
 
+                    case MessageType.SessionConnectRequest:
+                        OnInviteReceived(message.GetSenderName());
+                        break;
+
+                    case MessageType.SessionInviteCancelled:
+                        OnInviteCancelled(message.GetSenderName(), message.GetMessageText());
+                        break;
+
                     case MessageType.SessionConnectResponse:
+                        ClearIncomingInvites();
                         _connectedToUsername = message.GetReceiverName();
                         _isInSession = true;
                         ShowSessionStarted(_connectedToUsername);
@@ -456,6 +535,7 @@ public class Chat
             _isInSession = false;
             _isAwaitingUsername = false;
             _connectedToUsername = null;
+            ClearIncomingInvites();
 
             // Closing the socket unblocks the receive thread's ReadLine; the channel itself holds nothing else.
             _tcpClient?.Close();

@@ -17,7 +17,9 @@ public static class MessageFactory
             { MessageErrorType.NameAlreadyTaken,       "Name already taken." },
             { MessageErrorType.InvalidUsername,        "Invalid username. Use 1-20 letters, digits, '_', '-' or '.'." },
             { MessageErrorType.AlreadyInSession,       "User already in session." },
-            { MessageErrorType.CannotConnectToSelf,    "You can't connect to yourself." }
+            { MessageErrorType.CannotConnectToSelf,    "You can't connect to yourself." },
+            { MessageErrorType.InviteNotFound,         "No pending chat request from: {0}" },
+            { MessageErrorType.TooManyRequests,        "Too many chat requests. Try again in {0}s." }
         };
 
     
@@ -107,6 +109,24 @@ public static class MessageFactory
     public static Message CreateSessionEnded(string receiver, string peer)
     {
         return CreateMessage(MessageType.SessionEnded, "SERVER", receiver, peer);
+    }
+
+    public const string InviteAccept = "accept";
+    public const string InviteDecline = "decline";
+
+    /// <summary>Client -> server: answer to a chat request from <paramref name="requester"/>.</summary>
+    public static Message CreateSessionInviteResponse(string sender, string requester, bool accept)
+    {
+        return CreateMessage(MessageType.SessionInviteResponse, sender, requester, accept ? InviteAccept : InviteDecline);
+    }
+
+    /// <summary>
+    /// Server -> client: a pending chat request between <paramref name="otherUser"/> and the receiver is gone.
+    /// The sender field is the other user, the text is an <see cref="InviteCancelReason"/>.
+    /// </summary>
+    public static Message CreateSessionInviteCancelled(string otherUser, string receiver, InviteCancelReason reason)
+    {
+        return CreateMessage(MessageType.SessionInviteCancelled, otherUser, receiver, reason.ToString());
     }
 
     public static Message CreateSessionLeave(string sender)

@@ -14,5 +14,7 @@ public enum MessageType
     SessionEnded = 9,
     SessionLeave = 10,
     Ping = 11,
-    Pong = 12
+    Pong = 12,
+    SessionInviteResponse = 13,
+    SessionInviteCancelled = 14
 }

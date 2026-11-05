@@ -22,7 +22,9 @@ public class ClientCommandManager
 
         Register("help",      "/help",               "Show available commands",            _ => ShowHelp());
         Register("clear",     "/clear",              "Clear the console",                  _ => Console.Clear());
-        Register("connect",   "/connect <username>", "Start a chat session with a user",   Connect);
+        Register("connect",   "/connect <username>", "Send a chat request to a user",      Connect);
+        Register("accept",    "/accept [username]",  "Accept a chat request",              args => Answer(args, accept: true));
+        Register("decline",   "/decline [username]", "Decline a chat request",             args => Answer(args, accept: false));
         Register("leave",     "/leave",              "Leave the current chat session",     _ => Leave());
         Register("ping",      "/ping",               "Measure latency to the server",      _ => Ping());
         Register("reconnect", "/reconnect",          "Reconnect to the server",            _ => _chat.Reconnect());
@@ -83,6 +85,53 @@ public class ClientCommandManager
         {
             _chat.SendCommandRequest("help");
         }
+    }
+
+    /// <summary>Without a name answers the only pending request; with several, the name is required.</summary>
+    private void Answer(string args, bool accept)
+    {
+        if (!_chat.IsConnected)
+        {
+            Console.WriteLine("Not connected to the server. Use /reconnect.");
+            return;
+        }
+
+        List<string> invites = _chat.GetIncomingInvites();
+        string name = args.Split(' ', StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 } words ? words[0] : string.Empty;
+        string verb = accept ? "/accept" : "/decline";
+
+        if (invites.Count == 0)
+        {
+            Console.WriteLine("No pending chat requests.");
+            return;
+        }
+
+        if (name.Length == 0)
+        {
+            if (invites.Count > 1)
+            {
+                Console.WriteLine($"Several chat requests: {string.Join(", ", invites)}. Use {verb} <username>.");
+                return;
+            }
+
+            name = invites[0];
+        }
+
+        string? requester = invites.Find(i => string.Equals(i, name, StringComparison.OrdinalIgnoreCase));
+
+        if (requester == null)
+        {
+            Console.WriteLine($"No pending chat request from {name}.");
+            return;
+        }
+
+        if (accept && _chat.IsInSession)
+        {
+            Console.WriteLine($"You are already chatting with {_chat.ConnectedToUsername}. Use /leave first.");
+            return;
+        }
+
+        _chat.AnswerInvite(requester, accept);
     }
 
     private void Leave()

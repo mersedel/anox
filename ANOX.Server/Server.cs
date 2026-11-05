@@ -12,6 +12,8 @@ class Server
         ILogger logger = new ConsoleLogger();
         
         bool isListening = true;
+
+        InviteManager.Expired += Client.OnInviteExpired;
         
         IPAddress ipAddress = IPAddress.Parse("192.168.0.55");
         int port = 5656;
