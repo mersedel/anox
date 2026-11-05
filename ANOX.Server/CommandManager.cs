@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using ANOX.Core;
+using ANOX.Logger;
 
 namespace ANOX.Server;
 
@@ -14,20 +15,24 @@ namespace ANOX.Server;
 /// </summary>
 public static class CommandManager
 {
-    private record ServerCommand(string Name, string Description, bool AdminOnly, Func<Client, string, string> Execute);
-
-    // TODO: there is no authentication yet, so anyone can register with an admin name.
-    // Replace with a real check (password/token) before relying on this.
-    private static readonly HashSet<string> _adminUsernames = new(StringComparer.Ordinal)
-    {
-        "admin"
-    };
+    /// <param name="Hidden">Not listed in /help (e.g. /login).</param>
+    private record ServerCommand(string Name, string Description, bool AdminOnly, bool Hidden, Func<Client, string, string> Execute);
 
     private static readonly Dictionary<string, ServerCommand> _commands = new(StringComparer.OrdinalIgnoreCase);
 
+    // Failed /login attempts per IP address, so reconnecting doesn't reset the counter.
+    private static readonly object _loginLock = new();
+    private static readonly Dictionary<string, (int Failures, DateTime LockedUntil)> _loginAttempts = new();
+
+    private static string _adminPasswordHash = string.Empty;
+    private static int _maxLoginAttempts = 5;
+    private static TimeSpan _loginLockout = TimeSpan.FromSeconds(60);
+    private static ILogger? _logger;
+
     static CommandManager()
     {
-        Register("help",              "Show server commands",          false, (client, _) => GetHelp(client));
+        Register("help",              "Show server commands",          false, (client, _) => GetHelp(client), hidden: true);
+        Register("login",             "Log in as admin",               false, Login, hidden: true);
         Register("getServerStatus",   "Server status and uptime",      false, (_, _) => GetServerStatus());
         Register("getServerInfo",     "Server version and platform",   false, (_, _) => GetServerInfo());
         Register("getServerTime",     "Current server time",           false, (_, _) => $"Server time: {DateTime.Now:yyyy-MM-dd HH:mm:ss zzz}");
@@ -35,13 +40,18 @@ public static class CommandManager
         Register("getAllUsersAmount", "Number of online users",        true,  (_, _) => $"Users online: {ClientManager.ClientCount}");
     }
 
-    private static void Register(string name, string description, bool adminOnly, Func<Client, string, string> execute)
+    public static void Configure(ServerConfig config, ILogger logger)
     {
-        _commands[name] = new ServerCommand(name, description, adminOnly, execute);
+        _adminPasswordHash = config.AdminPasswordHash;
+        _maxLoginAttempts = config.MaxLoginAttempts;
+        _loginLockout = TimeSpan.FromSeconds(config.LoginLockoutSeconds);
+        _logger = logger;
     }
 
-    public static bool IsAdmin(Client client) =>
-        client.IsRegistered && _adminUsernames.Contains(client.Username);
+    private static void Register(string name, string description, bool adminOnly, Func<Client, string, string> execute, bool hidden = false)
+    {
+        _commands[name] = new ServerCommand(name, description, adminOnly, hidden, execute);
+    }
 
     /// <param name="commandText">Command name without '/', followed by optional arguments.</param>
     public static void Execute(Client client, string commandText)
@@ -64,7 +74,7 @@ public static class CommandManager
             return;
         }
 
-        if (command.AdminOnly && !IsAdmin(client))
+        if (command.AdminOnly && !client.IsAdmin)
         {
             client.SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.Unauthorized, client.Username));
             return;
@@ -75,8 +85,9 @@ public static class CommandManager
         {
             response = command.Execute(client, args);
         }
-        catch (Exception)
+        catch (Exception e)
         {
+            _logger?.Log(LogType.Error, $"Command /{command.Name} from [{client.Username}] failed: {e.Message}");
             client.SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.ServerInternalError, client.Username));
             return;
         }
@@ -84,14 +95,53 @@ public static class CommandManager
         client.SendMessage(MessageFactory.CreateCommandResponse(client.Username, response));
     }
 
+    private static string Login(Client client, string password)
+    {
+        if (client.IsAdmin) return "You are already logged in as admin.";
+
+        if (string.IsNullOrEmpty(_adminPasswordHash)) return "Admin login is disabled on this server.";
+
+        if (password.Length == 0) return "Usage: /login <password>";
+
+        string ip = client.RemoteAddress;
+        DateTime now = DateTime.UtcNow;
+
+        lock (_loginLock)
+        {
+            _loginAttempts.TryGetValue(ip, out var attempts);
+
+            if (attempts.LockedUntil > now)
+            {
+                return $"Too many failed attempts. Try again in {Math.Ceiling((attempts.LockedUntil - now).TotalSeconds)}s.";
+            }
+
+            if (PasswordHasher.Verify(password, _adminPasswordHash))
+            {
+                _loginAttempts.Remove(ip);
+                client.IsAdmin = true;
+                _logger?.Log(LogType.Info, $"[{client.Username}] logged in as admin from {ip}");
+                return "Logged in as admin.";
+            }
+
+            int failures = attempts.Failures + 1;
+            _logger?.Log(LogType.Warning, $"Failed admin login by [{client.Username}] from {ip} ({failures}/{_maxLoginAttempts})");
+
+            if (failures >= _maxLoginAttempts)
+            {
+                _loginAttempts[ip] = (0, now + _loginLockout);
+                return $"Wrong password. Login is locked for {(int)_loginLockout.TotalSeconds}s.";
+            }
+
+            _loginAttempts[ip] = (failures, DateTime.MinValue);
+            return "Wrong password.";
+        }
+    }
+
     private static string GetHelp(Client client)
     {
-        bool isAdmin = IsAdmin(client);
-
         IEnumerable<string> lines = _commands.Values
-            // The client shows its own /help line, so don't list "help" twice.
-            .Where(c => c.Name != "help")
-            .Where(c => !c.AdminOnly || isAdmin)
+            .Where(c => !c.Hidden)
+            .Where(c => !c.AdminOnly || client.IsAdmin)
             .Select(c => $"  /{c.Name,-21} {c.Description}{(c.AdminOnly ? " (admin)" : string.Empty)}");
 
         return "Server commands:" + Environment.NewLine + string.Join(Environment.NewLine, lines);
@@ -107,9 +157,10 @@ public static class CommandManager
 
     private static string GetServerInfo()
     {
-        string version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
+        string version = ProtocolInfo.GetAppVersion(Assembly.GetExecutingAssembly());
 
-        return $"ANOX Server v{version} | {RuntimeInformation.FrameworkDescription} | {RuntimeInformation.OSDescription}";
+        return $"Server: ANOX v{version}, protocol {ProtocolInfo.Version} | " +
+               $"{RuntimeInformation.FrameworkDescription} | {RuntimeInformation.OSDescription}";
     }
 
     private static string GetAllUsersNames()

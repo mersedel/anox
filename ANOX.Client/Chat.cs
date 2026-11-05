@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Threading;
 using ANOX.Core;
 using ANOX.Logger;
@@ -37,6 +39,9 @@ public class Chat
     private string _serverIp;
     private int _port;
 
+    public static string VersionText =>
+        $"ANOX Client v{ProtocolInfo.GetAppVersion(Assembly.GetExecutingAssembly())}, protocol {ProtocolInfo.Version}";
+
     public bool IsConnected => _isConnected;
     public bool IsInSession => _isInSession;
     public string Username => _username;
@@ -53,6 +58,8 @@ public class Chat
     public void Start()
     {
         AskUsername();
+
+        Console.WriteLine($"{VersionText} | server {_serverIp}:{_port}");
 
         Connect();
 
@@ -75,7 +82,7 @@ public class Chat
             if (TrySetUsername(input)) break;
         }
 
-        Console.Clear();
+        ClearConsole();
         SetTitle($"ANOX - {_username}");
     }
 
@@ -340,6 +347,13 @@ public class Chat
     /// </summary>
     private void ShowOwnMessage(string text, string rawInput)
     {
+        EraseInputLine(rawInput);
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {_username}: {text}");
+    }
+
+    /// <summary>Removes the line the console echoed while the user typed it (also used to hide /login passwords).</summary>
+    public void EraseInputLine(string rawInput)
+    {
         try
         {
             int width = Console.BufferWidth;
@@ -352,10 +366,8 @@ public class Chat
         }
         catch
         {
-            // Output is redirected or the terminal doesn't support cursor moves: just print below.
+            // Output is redirected or the terminal doesn't support cursor moves.
         }
-
-        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {_username}: {text}");
     }
 
     private void ReceiveLoop(TcpClient tcpClient, MessageChannel channel)
@@ -382,10 +394,11 @@ public class Chat
                 switch (message.GetMessageType())
                 {
                     case MessageType.ServerError:
-                        _logger.Log(LogType.Error, $"Error from server: {message.GetMessageText()}");
+                        var (errorType, errorText) = MessageParser.ParseError(message);
+                        _logger.Log(LogType.Error, $"Error from server: {errorText}");
 
-                        // An error before registration means the name was rejected: ask for another one.
-                        if (!_isRegistered)
+                        // The name was rejected: ask for another one (the connection stays open).
+                        if (!_isRegistered && errorType is MessageErrorType.NameAlreadyTaken or MessageErrorType.InvalidUsername)
                         {
                             _isAwaitingUsername = true;
                             Console.WriteLine("Enter another username: ");
@@ -487,6 +500,18 @@ public class Chat
         SetTitle($"ANOX - {_username}");
 
         Console.WriteLine($"===== Chat with {peer} ended =====");
+    }
+
+    /// <summary>Console.Clear throws when output is redirected (pipes, IDE consoles).</summary>
+    public static void ClearConsole()
+    {
+        try
+        {
+            Console.Clear();
+        }
+        catch (IOException)
+        {
+        }
     }
 
     private static void SetTitle(string title)

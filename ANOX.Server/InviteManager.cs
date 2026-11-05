@@ -14,7 +14,8 @@ public static class InviteManager
 {
     public record Invite(string From, string To);
 
-    public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
+    // Defaults; overwritten from server.json by Configure().
+    public static TimeSpan Timeout { get; private set; } = TimeSpan.FromSeconds(60);
 
     private static readonly object _lock = new();
 
@@ -22,9 +23,17 @@ public static class InviteManager
     private static readonly Dictionary<string, (Invite Invite, Timer Timer)> _invitesByFrom = new();
 
     // Anti-spam: a pause before asking the same user again, and a cap on requests per window.
-    public static readonly TimeSpan SameUserCooldown = TimeSpan.FromSeconds(15);
-    public static readonly TimeSpan RateWindow = TimeSpan.FromSeconds(60);
-    public const int MaxRequestsPerWindow = 5;
+    public static TimeSpan SameUserCooldown { get; private set; } = TimeSpan.FromSeconds(15);
+    public static TimeSpan RateWindow { get; private set; } = TimeSpan.FromSeconds(60);
+    public static int MaxRequestsPerWindow { get; private set; } = 5;
+
+    public static void Configure(ServerConfig config)
+    {
+        Timeout = TimeSpan.FromSeconds(config.InviteTimeoutSeconds);
+        SameUserCooldown = TimeSpan.FromSeconds(config.InviteSameUserCooldownSeconds);
+        RateWindow = TimeSpan.FromSeconds(config.InviteRateWindowSeconds);
+        MaxRequestsPerWindow = config.MaxInvitesPerWindow;
+    }
 
     // Send times per requester (kept after disconnect, so reconnecting doesn't reset the limit).
     private static readonly Dictionary<string, List<(DateTime At, string To)>> _sendHistory = new();

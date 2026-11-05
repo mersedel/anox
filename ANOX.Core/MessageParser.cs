@@ -20,6 +20,19 @@ public static class MessageParser
         return stringBuilder.ToString();
     }
 
+    /// <summary>Splits a ServerError message into its error code and human-readable text.</summary>
+    public static (MessageErrorType Type, string Text) ParseError(Message message)
+    {
+        string[] parts = message.GetMessageText().Split('|', 2);
+
+        if (parts.Length == 2 && int.TryParse(parts[0], out int code) && Enum.IsDefined(typeof(MessageErrorType), code))
+        {
+            return ((MessageErrorType)code, parts[1]);
+        }
+
+        return (MessageErrorType.Unknown, message.GetMessageText());
+    }
+
     public static Message DeserializeClientMessage(string serializedMessage)
     {
         string[] parts = serializedMessage.Split('|', 4);

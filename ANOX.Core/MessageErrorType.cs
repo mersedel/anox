@@ -13,5 +13,6 @@ public enum MessageErrorType
     AlreadyInSession = 8,
     CannotConnectToSelf = 9,
     InviteNotFound = 10,
-    TooManyRequests = 11
+    TooManyRequests = 11,
+    ProtocolMismatch = 12
 }

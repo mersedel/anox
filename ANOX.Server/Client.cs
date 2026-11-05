@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using ANOX.Core;
@@ -22,18 +23,30 @@ public class Client
 
     private string? _clientUsername;
 
+    private readonly int _maxMessageLength;
+
     /// <summary>Empty until the client is registered.</summary>
     public string Username => _clientUsername ?? string.Empty;
     public bool IsRegistered => _isRegistered;
 
+    /// <summary>Set by a successful /login; lasts until disconnect.</summary>
+    public bool IsAdmin { get; set; }
+
+    public string RemoteAddress { get; }
+
     private string DisplayName => _clientUsername ?? "unregistered";
 
-    public Client(TcpClient tcpClient, ILogger logger)
+    public Client(TcpClient tcpClient, ILogger logger, ServerConfig config)
     {
         _tcpClient = tcpClient;
         _stream = tcpClient.GetStream();
-        _channel = new MessageChannel(_stream);
+        _maxMessageLength = config.MaxMessageLength;
+
+        // Base64 of a UTF-8 message is at most ~5.4 chars per character, plus header fields.
+        _channel = new MessageChannel(_stream, maxLineLength: config.MaxMessageLength * 6 + 256);
         _logger = logger;
+
+        RemoteAddress = (tcpClient.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "unknown";
     }
 
     public void Start()
@@ -49,7 +62,17 @@ public class Client
 
     private void HandleRegister(Message message)
     {
-        string username = message.GetMessageText().Trim();
+        // Old or foreign clients: tell them to update and close the connection.
+        if (!int.TryParse(message.GetMessageText(), out int clientProtocol) || clientProtocol != ProtocolInfo.Version)
+        {
+            SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.ProtocolMismatch, string.Empty,
+                ProtocolInfo.Version.ToString()));
+            _logger.Log(LogType.Warning, $"Rejected client with protocol \"{message.GetMessageText()}\" (server uses {ProtocolInfo.Version})");
+            Disconnect();
+            return;
+        }
+
+        string username = message.GetSenderName().Trim();
 
         // On failure keep the connection open: the client can retry with another name.
         if (!MessageValidator.IsValidUsername(username))
@@ -230,9 +253,21 @@ public class Client
     {
         try
         {
-            while (true)
+            while (_isConnected)
             {
-                string? receivedSerializedMessage = _channel.ReadSerialized();
+                string? receivedSerializedMessage;
+
+                try
+                {
+                    receivedSerializedMessage = _channel.ReadSerialized();
+                }
+                catch (MessageTooLongException)
+                {
+                    // The oversized line was skipped, the connection is still in sync.
+                    SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.InvalidLength, Username));
+                    _logger.Log(LogType.Warning, $"Oversized message from [{DisplayName}] dropped");
+                    continue;
+                }
 
                 if (receivedSerializedMessage == null)
                 {
@@ -267,6 +302,12 @@ public class Client
                         break;
 
                     case MessageType.UserMessage:
+                        if (message.GetMessageText().Length > _maxMessageLength)
+                        {
+                            SendMessage(MessageFactory.CreateErrorMessage(MessageErrorType.InvalidLength, Username));
+                            break;
+                        }
+
                         ChatSession? session = SessionManager.GetSession(Username);
                         if (session != null)
                             session.Route(message, Username);
@@ -287,7 +328,9 @@ public class Client
                         break;
 
                     case MessageType.CommandRequest:
-                        _logger.Log(LogType.Info, $"[{Username}] executed command: /{message.GetMessageText()}");
+                        // Log only the name: arguments may be secret (e.g. /login <password>).
+                        string commandName = message.GetMessageText().Trim().Split(' ', 2)[0];
+                        _logger.Log(LogType.Info, $"[{Username}] executed command: /{commandName}");
                         CommandManager.Execute(this, message.GetMessageText());
                         break;
 

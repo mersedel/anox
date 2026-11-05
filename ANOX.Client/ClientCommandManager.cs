@@ -10,7 +10,8 @@ namespace ANOX.Client;
 /// </summary>
 public class ClientCommandManager
 {
-    private record ClientCommand(string Name, string Usage, string Description, Action<string> Execute);
+    /// <param name="Sensitive">Not listed in /help, and the typed line is erased from the console (e.g. passwords).</param>
+    private record ClientCommand(string Name, string Usage, string Description, Action<string> Execute, bool Sensitive);
 
     private readonly Chat _chat;
 
@@ -21,19 +22,22 @@ public class ClientCommandManager
         _chat = chat;
 
         Register("help",      "/help",               "Show available commands",            _ => ShowHelp());
-        Register("clear",     "/clear",              "Clear the console",                  _ => Console.Clear());
+        Register("clear",     "/clear",              "Clear the console",                  _ => Chat.ClearConsole());
         Register("connect",   "/connect <username>", "Send a chat request to a user",      Connect);
         Register("accept",    "/accept [username]",  "Accept a chat request",              args => Answer(args, accept: true));
         Register("decline",   "/decline [username]", "Decline a chat request",             args => Answer(args, accept: false));
         Register("leave",     "/leave",              "Leave the current chat session",     _ => Leave());
         Register("ping",      "/ping",               "Measure latency to the server",      _ => Ping());
+        Register("version",   "/version",            "Show client and server versions",    _ => ShowVersion());
         Register("reconnect", "/reconnect",          "Reconnect to the server",            _ => _chat.Reconnect());
         Register("exit",      "/exit",               "Disconnect and close the client",    _ => _chat.Exit());
+
+        Register("login",     "/login <password>",   "Log in as admin",                    Login, sensitive: true);
     }
 
-    private void Register(string name, string usage, string description, Action<string> execute)
+    private void Register(string name, string usage, string description, Action<string> execute, bool sensitive = false)
     {
-        _commands[name] = new ClientCommand(name, usage, description, execute);
+        _commands[name] = new ClientCommand(name, usage, description, execute, sensitive);
     }
 
     /// <param name="input">Raw input line, including the leading '/'.</param>
@@ -52,6 +56,8 @@ public class ClientCommandManager
 
         if (_commands.TryGetValue(name, out ClientCommand? command))
         {
+            if (command.Sensitive) _chat.EraseInputLine(input);
+
             command.Execute(args);
             return;
         }
@@ -76,6 +82,8 @@ public class ClientCommandManager
         Console.WriteLine("Client commands:");
         foreach (ClientCommand command in _commands.Values)
         {
+            if (command.Sensitive) continue;
+
             Console.WriteLine($"  {command.Usage,-22} {command.Description}");
         }
         Console.WriteLine("  //text                 Send a message that starts with '/'");
@@ -85,6 +93,33 @@ public class ClientCommandManager
         {
             _chat.SendCommandRequest("help");
         }
+    }
+
+    private void ShowVersion()
+    {
+        Console.WriteLine($"Client: {Chat.VersionText}");
+
+        if (_chat.IsConnected)
+        {
+            _chat.SendCommandRequest("getServerInfo");
+        }
+    }
+
+    private void Login(string password)
+    {
+        if (password.Length == 0)
+        {
+            Console.WriteLine("Usage: /login <password>");
+            return;
+        }
+
+        if (!_chat.IsConnected)
+        {
+            Console.WriteLine("Not connected to the server. Use /reconnect.");
+            return;
+        }
+
+        _chat.SendCommandRequest($"login {password}");
     }
 
     /// <summary>Without a name answers the only pending request; with several, the name is required.</summary>

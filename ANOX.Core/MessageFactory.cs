@@ -10,7 +10,7 @@ public static class MessageFactory
         {
             { MessageErrorType.Unknown,                "Unknown error." },
             { MessageErrorType.InvalidFormat,          "Invalid message format." },
-            { MessageErrorType.InvalidLength,          "Message too long." },
+            { MessageErrorType.InvalidLength,          "Message too long, it was not delivered." },
             { MessageErrorType.Unauthorized,           "Access denied." },
             { MessageErrorType.ServerInternalError,    "Server internal error." },
             { MessageErrorType.ReceiverNotFound,       "No user online with name: {0}" },
@@ -19,7 +19,8 @@ public static class MessageFactory
             { MessageErrorType.AlreadyInSession,       "User already in session." },
             { MessageErrorType.CannotConnectToSelf,    "You can't connect to yourself." },
             { MessageErrorType.InviteNotFound,         "No pending chat request from: {0}" },
-            { MessageErrorType.TooManyRequests,        "Too many chat requests. Try again in {0}s." }
+            { MessageErrorType.TooManyRequests,        "Too many chat requests. Try again in {0}s." },
+            { MessageErrorType.ProtocolMismatch,       "Unsupported client version. The server uses protocol {0}, please update the client." }
         };
 
     
@@ -40,7 +41,7 @@ public static class MessageFactory
 
     private static string ResolveErrorText(MessageErrorType errorType, string? argument)
     {
-        if (!_errorDictionary.TryGetValue(errorType, out string template))
+        if (!_errorDictionary.TryGetValue(errorType, out string? template))
             template = _errorDictionary[MessageErrorType.Unknown];
 
         // Templates without a placeholder ignore the argument; a missing argument never leaks a raw "{0}".
@@ -55,11 +56,12 @@ public static class MessageFactory
     {
         string text = ResolveErrorText(errorType, argument);
 
+        // "<code>|<text>": the client reacts to the code, not to the wording. Read with MessageParser.ParseError.
         return CreateMessage(
             MessageType.ServerError,
             "SERVER",
             receiver,
-            text
+            $"{(int)errorType}|{text}"
         );
     }
 
@@ -69,9 +71,10 @@ public static class MessageFactory
         return CreateMessage(MessageType.UserMessage, sender, receiver, text);
     }
     
+    /// <summary>The username goes in the sender field, the client's protocol version in the text.</summary>
     public static Message CreateRegisterMessage(string username)
     {
-        return CreateMessage(MessageType.Register, username, "SERVER", username);
+        return CreateMessage(MessageType.Register, username, "SERVER", ProtocolInfo.Version.ToString());
     }
 
     public static Message CreateSystemMessage(string text)
