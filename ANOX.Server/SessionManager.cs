@@ -21,7 +21,8 @@ public static class SessionManager
         // Checks and adds happen under one lock so two simultaneous /connect requests can't both pass.
         lock (_lock)
         {
-            if (!ClientManager.ContainsClient(clientA.Username) || !ClientManager.ContainsClient(clientB.Username))
+            // By reference: a client that is disconnecting is already out of ClientManager (or its name was re-taken).
+            if (!ClientManager.IsCurrent(clientA) || !ClientManager.IsCurrent(clientB))
             {
                 error = MessageErrorType.ReceiverNotFound;
                 return false;
@@ -78,6 +79,21 @@ public static class SessionManager
         lock (_lock)
         {
             if (!_allChatSessions.TryGetValue(username, out ChatSession? session)) return null;
+
+            _allChatSessions.Remove(session.ClientA.Username);
+            _allChatSessions.Remove(session.ClientB.Username);
+
+            return session;
+        }
+    }
+
+    /// <summary>Removes the session only if this exact client is in it (not a newer client with the same name).</summary>
+    public static ChatSession? RemoveSession(Client client)
+    {
+        lock (_lock)
+        {
+            if (!_allChatSessions.TryGetValue(client.Username, out ChatSession? session)) return null;
+            if (!ReferenceEquals(session.ClientA, client) && !ReferenceEquals(session.ClientB, client)) return null;
 
             _allChatSessions.Remove(session.ClientA.Username);
             _allChatSessions.Remove(session.ClientB.Username);

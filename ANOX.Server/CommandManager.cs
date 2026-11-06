@@ -107,7 +107,7 @@ public static class CommandManager
 
         if (password.Length == 0) return "Usage: /login <password>";
 
-        string ip = client.RemoteAddress;
+        string ip = client.AddressKey;
         DateTime now = DateTime.UtcNow;
 
         // PBKDF2 runs under the lock on purpose: parallel connections from one address

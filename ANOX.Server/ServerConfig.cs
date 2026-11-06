@@ -15,6 +15,23 @@ public class ServerConfig
     public string Host { get; set; } = "0.0.0.0";
     public int Port { get; set; } = 5656;
 
+    /// <summary>Seconds a new connection has to register before it is closed.</summary>
+    public int RegisterTimeoutSeconds { get; set; } = 10;
+
+    /// <summary>Open connections allowed in total and from one IP address (IPv6: per /64).</summary>
+    public int MaxConnections { get; set; } = 500;
+    public int MaxConnectionsPerIp { get; set; } = 5;
+
+    /// <summary>A client that doesn't read its data for this long is disconnected.</summary>
+    public int SendTimeoutSeconds { get; set; } = 10;
+
+    /// <summary>Per-connection flood limit: average messages per second and allowed burst.</summary>
+    public int MaxMessagesPerSecond { get; set; } = 5;
+    public int MessageBurst { get; set; } = 20;
+
+    /// <summary>Malformed/unexpected messages tolerated before the connection is closed.</summary>
+    public int MaxProtocolViolations { get; set; } = 10;
+
     /// <summary>Hash for /login. Empty = admin login disabled. Generate with: AnoxServer --hash-password</summary>
     public string AdminPasswordHash { get; set; } = string.Empty;
 
@@ -89,9 +106,28 @@ public class ServerConfig
         RequirePositive(InviteRateWindowSeconds, nameof(InviteRateWindowSeconds));
         RequirePositive(MaxInvitesPerWindow, nameof(MaxInvitesPerWindow));
         RequirePositive(MaxMessageLength, nameof(MaxMessageLength));
+        RequirePositive(RegisterTimeoutSeconds, nameof(RegisterTimeoutSeconds));
+        RequirePositive(MaxConnections, nameof(MaxConnections));
+        RequirePositive(MaxConnectionsPerIp, nameof(MaxConnectionsPerIp));
+        RequirePositive(SendTimeoutSeconds, nameof(SendTimeoutSeconds));
+        RequirePositive(MaxMessagesPerSecond, nameof(MaxMessagesPerSecond));
+        RequirePositive(MessageBurst, nameof(MessageBurst));
+        RequirePositive(MaxProtocolViolations, nameof(MaxProtocolViolations));
+
+        // MaxMessageLength * 6 is the line limit; larger values would overflow int.
+        if (MaxMessageLength > 100_000)
+            throw new InvalidDataException($"{nameof(MaxMessageLength)} can't be greater than 100000.");
 
         if (InviteSameUserCooldownSeconds < 0)
             throw new InvalidDataException($"{nameof(InviteSameUserCooldownSeconds)} can't be negative.");
+
+        // The send history is kept only for the rate window; a longer cooldown would silently stop working.
+        if (InviteSameUserCooldownSeconds > InviteRateWindowSeconds)
+            throw new InvalidDataException($"{nameof(InviteSameUserCooldownSeconds)} can't be greater than {nameof(InviteRateWindowSeconds)}.");
+
+        // Timer/stream timeouts are in milliseconds (int).
+        if (SendTimeoutSeconds > 3600 || RegisterTimeoutSeconds > 3600)
+            throw new InvalidDataException("Timeouts can't be longer than 3600 seconds.");
     }
 
     private static void RequirePositive(int value, string name)

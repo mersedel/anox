@@ -20,7 +20,8 @@ public static class MessageFactory
             { MessageErrorType.CannotConnectToSelf,    "You can't connect to yourself." },
             { MessageErrorType.InviteNotFound,         "No pending chat request from: {0}" },
             { MessageErrorType.TooManyRequests,        "Too many chat requests. Try again in {0}s." },
-            { MessageErrorType.ProtocolMismatch,       "Unsupported client version. The server uses protocol {0}, please update the client." }
+            { MessageErrorType.ProtocolMismatch,       "Unsupported client version. The server uses protocol {0}, please update the client." },
+            { MessageErrorType.RateLimited,            "You are sending messages too fast, some of them were dropped." }
         };
 
     

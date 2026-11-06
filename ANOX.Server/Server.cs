@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using ANOX.Core;
 using ANOX.Logger;
 
@@ -39,9 +40,25 @@ class Server
             return 1;
         }
 
-        ILogger logger = string.IsNullOrWhiteSpace(config.LogFilePath)
-            ? consoleLogger
-            : new CombinedLogger(consoleLogger, new FileLogger(config.ResolvePath(config.LogFilePath)));
+        ILogger logger = consoleLogger;
+
+        if (!string.IsNullOrWhiteSpace(config.LogFilePath))
+        {
+            try
+            {
+                FileLogger fileLogger = new FileLogger(config.ResolvePath(config.LogFilePath));
+
+                // Flush and close the file on normal exit / Ctrl+C.
+                AppDomain.CurrentDomain.ProcessExit += (_, _) => fileLogger.Dispose();
+
+                logger = new CombinedLogger(consoleLogger, fileLogger);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // E.g. the file is locked by another server instance: keep running with console logging.
+                consoleLogger.Log(LogType.Warning, $"Can't open log file, logging to console only: {e.Message}");
+            }
+        }
 
         string version = ProtocolInfo.GetAppVersion(Assembly.GetExecutingAssembly());
         logger.Log(LogType.Info, $"ANOX Server v{version} (protocol {ProtocolInfo.Version})");
@@ -60,6 +77,7 @@ class Server
 
         InviteManager.Configure(config);
         CommandManager.Configure(config, logger);
+        ConnectionLimiter.Configure(config);
         InviteManager.Expired += Client.OnInviteExpired;
 
         TcpListener tcpListener = new TcpListener(IPAddress.Parse(config.Host), config.Port);
@@ -79,13 +97,81 @@ class Server
 
         while (true)
         {
-            TcpClient tcpClient = tcpListener.AcceptTcpClient();
-            logger.Log(LogType.Info, $"Client connected from {tcpClient.Client.RemoteEndPoint}");
+            TcpClient tcpClient;
 
-            Client client = new Client(tcpClient, logger, config);
+            try
+            {
+                tcpClient = tcpListener.AcceptTcpClient();
+            }
+            catch (SocketException e)
+            {
+                // E.g. a connection reset before accept, or out of sockets: keep serving the others.
+                logger.Log(LogType.Warning, $"Accept failed: {e.Message}");
+                Thread.Sleep(100); // don't spin if the error repeats
+                continue;
+            }
 
+            AcceptClient(tcpClient, logger, config);
+        }
+    }
+
+    private static DateTime _lastRejectLog = DateTime.MinValue;
+    private static int _rejectedSinceLog;
+
+    /// <summary>
+    /// Sets up one connection. Nothing thrown here may reach the accept loop: one broken socket
+    /// (e.g. reset right after accept) would otherwise crash the whole server.
+    /// </summary>
+    private static void AcceptClient(TcpClient tcpClient, ILogger logger, ServerConfig config)
+    {
+        Client? client = null;
+        string? addressKey = null;
+
+        try
+        {
+            IPAddress? address = (tcpClient.Client.RemoteEndPoint as IPEndPoint)?.Address;
+            string key = ConnectionLimiter.GetAddressKey(address);
+
+            if (!ConnectionLimiter.TryAcquire(key))
+            {
+                tcpClient.Close();
+                LogRejected(logger, key);
+                return;
+            }
+
+            addressKey = key;
+            logger.Log(LogType.Info, $"Client connected from {address}");
+
+            client = new Client(tcpClient, key, logger, config);
             client.Start();
         }
+        catch (Exception e)
+        {
+            logger.Log(LogType.Warning, $"Failed to set up a connection: {e.Message}");
+
+            if (client != null)
+            {
+                client.Close(); // also releases the limiter slot
+            }
+            else
+            {
+                tcpClient.Close();
+                if (addressKey != null) ConnectionLimiter.Release(addressKey);
+            }
+        }
+    }
+
+    /// <summary>At most one line per 10 s, so a connection flood can't flood the log too.</summary>
+    private static void LogRejected(ILogger logger, string addressKey)
+    {
+        _rejectedSinceLog++;
+
+        DateTime now = DateTime.UtcNow;
+        if (now - _lastRejectLog < TimeSpan.FromSeconds(10)) return;
+
+        logger.Log(LogType.Warning, $"Connection limit reached, rejected {_rejectedSinceLog} connection(s) (last from {addressKey})");
+        _lastRejectLog = now;
+        _rejectedSinceLog = 0;
     }
 
     /// <summary>Asks for a password without echoing it and prints its hash for server.json.</summary>
