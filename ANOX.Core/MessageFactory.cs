@@ -21,7 +21,9 @@ public static class MessageFactory
             { MessageErrorType.InviteNotFound,         "No pending chat request from: {0}" },
             { MessageErrorType.TooManyRequests,        "Too many chat requests. Try again in {0}s." },
             { MessageErrorType.ProtocolMismatch,       "Unsupported client version. The server uses protocol {0}, please update the client." },
-            { MessageErrorType.RateLimited,            "You are sending messages too fast, some of them were dropped." }
+            { MessageErrorType.RateLimited,            "You are sending messages too fast, some of them were dropped." },
+            { MessageErrorType.ServerFull,             "The server is full. Try again later." },
+            { MessageErrorType.TooManyConnections,     "Too many connections from your address. Close other clients and try again." }
         };
 
     

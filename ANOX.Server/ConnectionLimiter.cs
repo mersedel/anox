@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using ANOX.Core;
 
 namespace ANOX.Server;
 
@@ -41,14 +42,26 @@ public static class ConnectionLimiter
         return new IPAddress(bytes) + "/64";
     }
 
-    public static bool TryAcquire(string addressKey)
+    /// <param name="rejection">Which limit was hit, to tell the client; meaningless when true is returned.</param>
+    public static bool TryAcquire(string addressKey, out MessageErrorType rejection)
     {
         lock (_lock)
         {
             _perAddress.TryGetValue(addressKey, out int count);
 
-            if (_total >= _maxConnections || count >= _maxPerAddress) return false;
+            if (_total >= _maxConnections)
+            {
+                rejection = MessageErrorType.ServerFull;
+                return false;
+            }
 
+            if (count >= _maxPerAddress)
+            {
+                rejection = MessageErrorType.TooManyConnections;
+                return false;
+            }
+
+            rejection = default;
             _perAddress[addressKey] = count + 1;
             _total++;
             return true;

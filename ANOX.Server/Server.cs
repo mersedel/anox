@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using ANOX.Core;
 using ANOX.Logger;
 
@@ -132,9 +133,9 @@ class Server
             IPAddress? address = (tcpClient.Client.RemoteEndPoint as IPEndPoint)?.Address;
             string key = ConnectionLimiter.GetAddressKey(address);
 
-            if (!ConnectionLimiter.TryAcquire(key))
+            if (!ConnectionLimiter.TryAcquire(key, out MessageErrorType rejection))
             {
-                tcpClient.Close();
+                _ = RejectAsync(tcpClient, rejection);
                 LogRejected(logger, key);
                 return;
             }
@@ -157,6 +158,39 @@ class Server
             {
                 tcpClient.Close();
                 if (addressKey != null) ConnectionLimiter.Release(addressKey);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Tells a rejected client why before closing, so it doesn't just see "Disconnected".
+    /// Async on purpose: the accept loop must not wait, and under a connection flood
+    /// blocking pool threads would stall the server's timers.
+    /// </summary>
+    private static async Task RejectAsync(TcpClient tcpClient, MessageErrorType reason)
+    {
+        using (tcpClient)
+        {
+            try
+            {
+                Socket socket = tcpClient.Client;
+                byte[] line = Encoding.UTF8.GetBytes(
+                    MessageParser.SerializeMessage(MessageFactory.CreateErrorMessage(reason, string.Empty)) + "\n");
+
+                // Bounds the whole exchange: a peer that never closes can't hold the socket.
+                using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(2));
+
+                await socket.SendAsync(line, SocketFlags.None, timeout.Token);
+                socket.Shutdown(SocketShutdown.Send);
+
+                // Discard what the client already sent (its Register) until it closes. Closing with
+                // unread data sends an RST, and the client could lose the error line before reading it.
+                byte[] buffer = new byte[1024];
+                while (await socket.ReceiveAsync(buffer, SocketFlags.None, timeout.Token) > 0) { }
+            }
+            catch (Exception)
+            {
+                // Best effort: timeout, reset or a peer that's already gone.
             }
         }
     }
