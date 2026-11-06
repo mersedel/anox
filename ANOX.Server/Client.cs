@@ -310,7 +310,7 @@ public class Client
 
                         ChatSession? session = SessionManager.GetSession(Username);
                         if (session != null)
-                            session.Route(message, Username);
+                            session.Route(this, message.GetMessageText());
                         else
                             _logger.Log(LogType.Warning, $"[{Username}] sent UserMessage but has no active session");
                         break;
