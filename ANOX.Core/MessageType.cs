@@ -6,7 +6,7 @@ public enum MessageType
     Register = 1,
     SystemInfo = 2,
     CommandResponse = 3,
-    Broadcast = 4,
+    // 4 was Broadcast: never implemented on either side, removed. Don't reuse the value.
     ServerError = 5,
     SessionConnectRequest = 6,
     SessionConnectResponse = 7,

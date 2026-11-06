@@ -77,19 +77,9 @@ public static class MessageFactory
         return CreateMessage(MessageType.Register, username, "SERVER", ProtocolInfo.Version.ToString());
     }
 
-    public static Message CreateSystemMessage(string text)
-    {
-        return CreateMessage(MessageType.SystemInfo, "SERVER", "ALL", text);
-    }
-    
     public static Message CreateSystemMessage(string receiver, string text)
     {
         return CreateMessage(MessageType.SystemInfo, "SERVER", receiver, text);
-    }
-
-    public static Message CreateBroadcast(string sender, string text)
-    {
-        return CreateMessage(MessageType.Broadcast, sender, "ALL", text);
     }
 
     public static Message CreateCommandResponse(string receiver, string text)

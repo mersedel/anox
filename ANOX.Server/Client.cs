@@ -334,10 +334,6 @@ public class Client
                         CommandManager.Execute(this, message.GetMessageText());
                         break;
 
-                    case MessageType.Broadcast:
-                        // nothing for now
-                        break;
-
                     default:
                         _logger.Log(LogType.Warning, $"Unexpected message type [{message.GetMessageType()}] from [{Username}]");
                         break;

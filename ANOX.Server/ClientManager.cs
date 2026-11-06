@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Linq;
-using ANOX.Core;
 
 namespace ANOX.Server;
 
@@ -53,25 +52,6 @@ public static class ClientManager
         {
             return _allClients.Keys.OrderBy(name => name).ToList();
         }
-    }
-
-    public static int Broadcast(Message message, string senderUsername)
-    {
-        List<Client> targets;
-    
-        lock (_lock)
-        {
-            targets = _allClients.Values
-                .Where(s => s.Username != senderUsername)
-                .ToList();
-        }
-    
-        foreach (var session in targets)
-        {
-            session.SendMessage(message);
-        }
-    
-        return targets.Count;
     }
 
     public static void RemoveClient(string username)
