@@ -79,14 +79,16 @@ public class ClientCommandManager
 
     private void ShowHelp()
     {
-        Console.WriteLine("Client commands:");
+        List<string> lines = new() { "Client commands:" };
         foreach (ClientCommand command in _commands.Values)
         {
             if (command.Sensitive) continue;
 
-            Console.WriteLine($"  {command.Usage,-22} {command.Description}");
+            lines.Add($"  {command.Usage,-22} {command.Description}");
         }
-        Console.WriteLine("  //text                 Send a message that starts with '/'");
+        lines.Add("  //text                 Send a message that starts with '/'");
+
+        Chat.WriteBlock(lines.ToArray());
 
         // Server commands are known only to the server, so ask it for its own list.
         if (_chat.IsConnected)
@@ -97,7 +99,7 @@ public class ClientCommandManager
 
     private void ShowVersion()
     {
-        Console.WriteLine($"Client: {Chat.VersionText}");
+        Chat.WriteBlock($"Client: {Chat.VersionText}");
 
         if (_chat.IsConnected)
         {
