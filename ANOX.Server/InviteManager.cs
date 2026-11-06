@@ -37,6 +37,27 @@ public static class InviteManager
 
     // Send times per requester (kept after disconnect, so reconnecting doesn't reset the limit).
     private static readonly Dictionary<string, List<(DateTime At, string To)>> _sendHistory = new();
+    private static DateTime _lastHistorySweep = DateTime.MinValue;
+
+    /// <summary>
+    /// Drops users whose history is fully outside the window. Without it every name that ever
+    /// sent a request stays in memory forever (a bot can register thousands of random names).
+    /// Runs at most once per window, so the cost is small. Call under <see cref="_lock"/>.
+    /// </summary>
+    private static void SweepHistory(DateTime now)
+    {
+        if (now - _lastHistorySweep < RateWindow) return;
+        _lastHistorySweep = now;
+
+        List<string> stale = new();
+        foreach (var (user, history) in _sendHistory)
+        {
+            history.RemoveAll(h => now - h.At >= RateWindow);
+            if (history.Count == 0) stale.Add(user);
+        }
+
+        foreach (string user in stale) _sendHistory.Remove(user);
+    }
 
     /// <summary>
     /// Checks the anti-spam limits and, if allowed, records the attempt.
@@ -48,6 +69,8 @@ public static class InviteManager
 
         lock (_lock)
         {
+            SweepHistory(now);
+
             if (!_sendHistory.TryGetValue(from, out var history))
             {
                 history = new List<(DateTime At, string To)>();
