@@ -37,7 +37,7 @@ public class Chat
     private bool _hasRegisteredOnce = false;
 
     private string _username = string.Empty;
-    private string? _connectedToUsername;
+    private volatile string? _connectedToUsername;
 
     private string _serverIp;
     private int _port;
@@ -104,10 +104,12 @@ public class Chat
             return;
         }
 
+        MessageChannel channel = new MessageChannel(tcpClient.GetStream());
+
         lock (_connectionLock)
         {
             _tcpClient = tcpClient;
-            _channel = new MessageChannel(tcpClient.GetStream());
+            _channel = channel;
 
             _isConnected = true;
             _isRegistered = false;
@@ -115,8 +117,6 @@ public class Chat
             _isAwaitingUsername = false;
             _connectedToUsername = null;
         }
-
-        MessageChannel channel = _channel;
 
         Thread receiveThread = new Thread(() => ReceiveLoop(tcpClient, channel));
         receiveThread.IsBackground = true;
@@ -398,7 +398,7 @@ public class Chat
                     case MessageType.ServerError:
                         var (errorType, errorText) = MessageParser.ParseError(message);
                         Console.WriteLine();
-                        _logger.Log(LogType.Error, $"Error from server: {errorText}");
+                        _logger.Log(LogType.Error, $"Error from server: {Sanitize(errorText)}");
 
                         // The name was rejected: ask for another one (the connection stays open).
                         if (!_isRegistered && errorType is MessageErrorType.NameAlreadyTaken or MessageErrorType.InvalidUsername)
@@ -476,11 +476,12 @@ public class Chat
                         break;
 
                     case MessageType.UserMessage:
-                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message.GetSenderName()}: {message.GetMessageText()}");
+                        // Chat lines stay dense (no blank lines). The text comes from another user: strip control characters.
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message.GetSenderName()}: {Sanitize(message.GetMessageText())}");
                         break;
 
                     default:
-                        _logger.Log(LogType.Info, $"Message from [{message.GetSenderName()}]: {message.GetMessageText()}");
+                        _logger.Log(LogType.Warning, $"Unexpected message type [{message.GetMessageType()}] from server, ignored.");
                         break;
                 }
             }
@@ -532,6 +533,25 @@ public class Chat
     public static void WriteBlock(params string[] lines)
     {
         Console.WriteLine(Environment.NewLine + string.Join(Environment.NewLine, lines));
+    }
+
+    /// <summary>
+    /// Text from other users may contain control characters (ANSI escapes, '\r', bidi overrides)
+    /// that could fake server lines or mess up the terminal. Replace them before printing.
+    /// </summary>
+    private static string Sanitize(string text)
+    {
+        char[] chars = text.ToCharArray();
+
+        for (int i = 0; i < chars.Length; i++)
+        {
+            char c = chars[i];
+            bool isBidiControl = c is >= '‪' and <= '‮' or >= '⁦' and <= '⁩';
+
+            if (char.IsControl(c) || isBidiControl) chars[i] = '?';
+        }
+
+        return new string(chars);
     }
 
     /// <summary>Console.Clear throws when output is redirected (pipes, IDE consoles).</summary>
