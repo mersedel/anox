@@ -16,7 +16,8 @@ public static class MessageValidator
 
         if (parts.Length != 4) return false;
 
-        if (!Enum.TryParse<MessageType>(parts[0], out _)) return false;
+        // Exact names only: Enum.TryParse also accepts numbers ("999") and flag lists ("Ping, Pong").
+        if (!Enum.IsDefined(typeof(MessageType), parts[0])) return false;
 
         // The text is base64; reject garbage here instead of crashing in the parser.
         if (!Convert.TryFromBase64String(parts[3], new byte[parts[3].Length], out _)) return false;
