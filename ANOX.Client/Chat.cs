@@ -33,8 +33,11 @@ public class Chat
     // Users who sent us a chat request that we haven't answered yet.
     private readonly List<string> _incomingInvites = new();
 
+    // The console is cleared only after the first registration of this run; /reconnect keeps the chat history.
+    private bool _hasRegisteredOnce = false;
+
     private string _username = string.Empty;
-    private string? _connectedToUsername;
+    private volatile string? _connectedToUsername;
 
     private string _serverIp;
     private int _port;
@@ -101,10 +104,12 @@ public class Chat
             return;
         }
 
+        MessageChannel channel = new MessageChannel(tcpClient.GetStream());
+
         lock (_connectionLock)
         {
             _tcpClient = tcpClient;
-            _channel = new MessageChannel(tcpClient.GetStream());
+            _channel = channel;
 
             _isConnected = true;
             _isRegistered = false;
@@ -112,8 +117,6 @@ public class Chat
             _isAwaitingUsername = false;
             _connectedToUsername = null;
         }
-
-        MessageChannel channel = _channel;
 
         Thread receiveThread = new Thread(() => ReceiveLoop(tcpClient, channel));
         receiveThread.IsBackground = true;
@@ -160,7 +163,7 @@ public class Chat
 
         if (!accept)
         {
-            Console.WriteLine($"Declined the chat request from {requester}.");
+            WriteBlock($"Declined the chat request from {requester}.");
         }
     }
 
@@ -179,8 +182,7 @@ public class Chat
             if (!_incomingInvites.Contains(requester)) _incomingInvites.Add(requester);
         }
 
-        Console.WriteLine();
-        Console.WriteLine($">>> {requester} wants to chat with you. Type /accept or /decline.");
+        WriteBlock($">>> {requester} wants to chat with you. Type /accept or /decline.");
     }
 
     private void OnInviteCancelled(string otherUser, string reasonText)
@@ -204,7 +206,7 @@ public class Chat
             _ => $"Chat request with {otherUser} cancelled."
         };
 
-        Console.WriteLine(text);
+        WriteBlock(text);
     }
 
     public void LeaveSession()
@@ -395,7 +397,8 @@ public class Chat
                 {
                     case MessageType.ServerError:
                         var (errorType, errorText) = MessageParser.ParseError(message);
-                        _logger.Log(LogType.Error, $"Error from server: {errorText}");
+                        Console.WriteLine();
+                        _logger.Log(LogType.Error, $"Error from server: {Sanitize(errorText)}");
 
                         // The name was rejected: ask for another one (the connection stays open).
                         if (!_isRegistered && errorType is MessageErrorType.NameAlreadyTaken or MessageErrorType.InvalidUsername)
@@ -406,13 +409,29 @@ public class Chat
                         break;
 
                     case MessageType.SystemInfo:
-                        _logger.Log(LogType.Info, message.GetMessageText());
-
                         if (!_isRegistered)
                         {
                             _isRegistered = true;
+
+                            // First registration of this run: drop the startup lines (version, username prompt).
+                            // After /reconnect the screen is kept so the chat history stays visible.
+                            if (!_hasRegisteredOnce)
+                            {
+                                _hasRegisteredOnce = true;
+                                ClearConsole();
+                            }
+                            else
+                            {
+                                Console.WriteLine();
+                            }
+
+                            _logger.Log(LogType.Info, message.GetMessageText());
                             Console.WriteLine("Type /connect <username> to start chatting or /help for a list of commands.");
+                            break;
                         }
+
+                        Console.WriteLine();
+                        _logger.Log(LogType.Info, message.GetMessageText());
                         break;
 
                     case MessageType.SessionConnectRequest:
@@ -431,35 +450,38 @@ public class Chat
                         break;
 
                     case MessageType.CommandResponse:
-                        Console.WriteLine(message.GetMessageText());
+                        WriteBlock(message.GetMessageText());
                         break;
 
                     case MessageType.SessionEnded:
                         string? peer = _connectedToUsername;
                         _isInSession = false;
                         _connectedToUsername = null;
-                        if (peer != null) ShowSessionEnded(peer);
 
                         string leaver = message.GetMessageText();
-                        Console.WriteLine(leaver == _username
+                        string hint = leaver == _username
                             ? "You left the chat. Use /connect <username> to start a new one."
-                            : $"{leaver} left the chat. Use /connect <username> to start a new one.");
+                            : $"{leaver} left the chat. Use /connect <username> to start a new one.";
+
+                        if (peer != null) ShowSessionEnded(peer, hint);
+                        else WriteBlock(hint);
                         break;
 
                     case MessageType.Pong:
                         if (long.TryParse(message.GetMessageText(), out long sentAt))
                         {
                             TimeSpan rtt = Stopwatch.GetElapsedTime(sentAt);
-                            Console.WriteLine($"Pong from server: {rtt.TotalMilliseconds:0.#} ms");
+                            WriteBlock($"Pong from server: {rtt.TotalMilliseconds:0.#} ms");
                         }
                         break;
 
                     case MessageType.UserMessage:
-                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message.GetSenderName()}: {message.GetMessageText()}");
+                        // Chat lines stay dense (no blank lines). The text comes from another user: strip control characters.
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message.GetSenderName()}: {Sanitize(message.GetMessageText())}");
                         break;
 
                     default:
-                        _logger.Log(LogType.Info, $"Message from [{message.GetSenderName()}]: {message.GetMessageText()}");
+                        _logger.Log(LogType.Warning, $"Unexpected message type [{message.GetMessageType()}] from server, ignored.");
                         break;
                 }
             }
@@ -490,16 +512,46 @@ public class Chat
     {
         SetTitle($"ANOX - {_username} <-> {peer}");
 
-        Console.WriteLine();
-        Console.WriteLine($"===== Chat with {peer} =====");
-        Console.WriteLine("Type a message and press Enter. /help for commands.");
+        // Trailing empty line: the first chat message doesn't stick to the header.
+        WriteBlock($"===== Chat with {peer} =====",
+            "Type a message and press Enter. /help for commands.",
+            string.Empty);
     }
 
-    private void ShowSessionEnded(string peer)
+    private void ShowSessionEnded(string peer, string? hint = null)
     {
         SetTitle($"ANOX - {_username}");
 
-        Console.WriteLine($"===== Chat with {peer} ended =====");
+        if (hint == null) WriteBlock($"===== Chat with {peer} ended =====");
+        else WriteBlock($"===== Chat with {peer} ended =====", hint);
+    }
+
+    /// <summary>
+    /// Prints a logical block of output preceded by an empty line, so it doesn't stick to earlier text.
+    /// Written with one call: the receive and input threads both print, and a block must not interleave.
+    /// </summary>
+    public static void WriteBlock(params string[] lines)
+    {
+        Console.WriteLine(Environment.NewLine + string.Join(Environment.NewLine, lines));
+    }
+
+    /// <summary>
+    /// Text from other users may contain control characters (ANSI escapes, '\r', bidi overrides)
+    /// that could fake server lines or mess up the terminal. Replace them before printing.
+    /// </summary>
+    private static string Sanitize(string text)
+    {
+        char[] chars = text.ToCharArray();
+
+        for (int i = 0; i < chars.Length; i++)
+        {
+            char c = chars[i];
+            bool isBidiControl = c is >= '‪' and <= '‮' or >= '⁦' and <= '⁩';
+
+            if (char.IsControl(c) || isBidiControl) chars[i] = '?';
+        }
+
+        return new string(chars);
     }
 
     /// <summary>Console.Clear throws when output is redirected (pipes, IDE consoles).</summary>
@@ -572,6 +624,10 @@ public class Chat
         if (endedSessionWith != null)
         {
             ShowSessionEnded(endedSessionWith);
+        }
+        else
+        {
+            Console.WriteLine();
         }
 
         _logger.Log(LogType.Info, showHint && !_isExiting

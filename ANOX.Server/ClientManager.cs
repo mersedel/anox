@@ -1,6 +1,6 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using ANOX.Core;
 
 namespace ANOX.Server;
 
@@ -8,7 +8,8 @@ public static class ClientManager
 {
     private static readonly object _lock = new();
     
-    private static Dictionary<string, Client> _allClients = new();
+    // Case-insensitive: "Bob" and "bob" can't be online at the same time and impersonate each other.
+    private static readonly Dictionary<string, Client> _allClients = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Atomic check-and-add: returns false if the name is already taken.</summary>
     public static bool TryAddClient(string username, Client client)
@@ -16,14 +17,6 @@ public static class ClientManager
         lock (_lock)
         {
             return _allClients.TryAdd(username, client);
-        }
-    }
-
-    public static bool ContainsClient(string username)
-    {
-        lock (_lock)
-        {
-            return _allClients.ContainsKey(username);
         }
     }
 
@@ -55,30 +48,24 @@ public static class ClientManager
         }
     }
 
-    public static int Broadcast(Message message, string senderUsername)
+    /// <summary>True if this exact client is the one registered under its name.</summary>
+    public static bool IsCurrent(Client client)
     {
-        List<Client> targets;
-    
         lock (_lock)
         {
-            targets = _allClients.Values
-                .Where(s => s.Username != senderUsername)
-                .ToList();
+            return _allClients.TryGetValue(client.Username, out Client? current) && ReferenceEquals(current, client);
         }
-    
-        foreach (var session in targets)
-        {
-            session.SendMessage(message);
-        }
-    
-        return targets.Count;
     }
 
-    public static void RemoveClient(string username)
+    /// <summary>Removes the entry only if it still belongs to <paramref name="client"/>.</summary>
+    public static void RemoveClient(string username, Client client)
     {
         lock (_lock)
         {
-            _allClients.Remove(username);
+            if (_allClients.TryGetValue(username, out Client? current) && ReferenceEquals(current, client))
+            {
+                _allClients.Remove(username);
+            }
         }
     }
 }

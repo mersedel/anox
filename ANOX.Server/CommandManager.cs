@@ -22,7 +22,11 @@ public static class CommandManager
 
     // Failed /login attempts per IP address, so reconnecting doesn't reset the counter.
     private static readonly object _loginLock = new();
-    private static readonly Dictionary<string, (int Failures, DateTime LockedUntil)> _loginAttempts = new();
+    private static readonly Dictionary<string, (int Failures, DateTime LastFailure, DateTime LockedUntil)> _loginAttempts = new();
+    private static DateTime _lastLoginSweep = DateTime.MinValue;
+
+    // Process.GetCurrentProcess() returns a new IDisposable with an OS handle each call; read the start time once.
+    private static readonly DateTime _processStartTime = GetProcessStartTime();
 
     private static string _adminPasswordHash = string.Empty;
     private static int _maxLoginAttempts = 5;
@@ -103,12 +107,22 @@ public static class CommandManager
 
         if (password.Length == 0) return "Usage: /login <password>";
 
-        string ip = client.RemoteAddress;
+        string ip = client.AddressKey;
         DateTime now = DateTime.UtcNow;
 
+        // PBKDF2 runs under the lock on purpose: parallel connections from one address
+        // can't race past the failure counter. The per-address lockout bounds the CPU cost.
         lock (_loginLock)
         {
+            SweepLoginAttempts(now);
+
             _loginAttempts.TryGetValue(ip, out var attempts);
+
+            // Old failures expire: a typo last week shouldn't count towards today's lockout.
+            if (attempts.LockedUntil <= now && now - attempts.LastFailure >= _loginLockout)
+            {
+                attempts = default;
+            }
 
             if (attempts.LockedUntil > now)
             {
@@ -128,13 +142,36 @@ public static class CommandManager
 
             if (failures >= _maxLoginAttempts)
             {
-                _loginAttempts[ip] = (0, now + _loginLockout);
+                _loginAttempts[ip] = (0, now, now + _loginLockout);
                 return $"Wrong password. Login is locked for {(int)_loginLockout.TotalSeconds}s.";
             }
 
-            _loginAttempts[ip] = (failures, DateTime.MinValue);
+            _loginAttempts[ip] = (failures, now, DateTime.MinValue);
             return "Wrong password.";
         }
+    }
+
+    /// <summary>
+    /// Forgets addresses with no recent failures and no active lockout, so the table doesn't grow
+    /// with every address that ever mistyped. At most once per lockout period. Call under <see cref="_loginLock"/>.
+    /// </summary>
+    private static void SweepLoginAttempts(DateTime now)
+    {
+        if (now - _lastLoginSweep < _loginLockout) return;
+        _lastLoginSweep = now;
+
+        List<string> stale = _loginAttempts
+            .Where(e => e.Value.LockedUntil <= now && now - e.Value.LastFailure >= _loginLockout)
+            .Select(e => e.Key)
+            .ToList();
+
+        foreach (string key in stale) _loginAttempts.Remove(key);
+    }
+
+    private static DateTime GetProcessStartTime()
+    {
+        using Process process = Process.GetCurrentProcess();
+        return process.StartTime;
     }
 
     private static string GetHelp(Client client)
@@ -149,7 +186,7 @@ public static class CommandManager
 
     private static string GetServerStatus()
     {
-        TimeSpan uptime = DateTime.Now - Process.GetCurrentProcess().StartTime;
+        TimeSpan uptime = DateTime.Now - _processStartTime;
 
         return $"Status: online | Uptime: {(int)uptime.TotalDays}d {uptime:hh\\:mm\\:ss} | " +
                $"Users online: {ClientManager.ClientCount} | Active sessions: {SessionManager.SessionCount}";

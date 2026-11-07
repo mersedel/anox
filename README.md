@@ -54,6 +54,13 @@ The client takes the server address from the first source available:
 | `InviteRateWindowSeconds` | `60` | Time window for the request limit |
 | `MaxInvitesPerWindow` | `5` | Maximum chat requests per window |
 | `MaxMessageLength` | `2000` | Maximum message length in characters |
+| `RegisterTimeoutSeconds` | `10` | A new connection that doesn't register in time is closed |
+| `MaxConnections` | `500` | Open connections allowed in total |
+| `MaxConnectionsPerIp` | `5` | Open connections allowed from one IP (IPv6: per /64) |
+| `SendTimeoutSeconds` | `10` | A client that stops reading for this long is disconnected |
+| `MaxMessagesPerSecond` | `5` | Average messages per second per connection; extra ones are dropped |
+| `MessageBurst` | `20` | Messages allowed in a short burst above that rate |
+| `MaxProtocolViolations` | `10` | Malformed messages tolerated before the connection is closed |
 | `LogFilePath` | `logs/server.log` | Log file; empty means console only |
 
 ### Admin password

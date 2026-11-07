@@ -20,7 +20,10 @@ public static class MessageFactory
             { MessageErrorType.CannotConnectToSelf,    "You can't connect to yourself." },
             { MessageErrorType.InviteNotFound,         "No pending chat request from: {0}" },
             { MessageErrorType.TooManyRequests,        "Too many chat requests. Try again in {0}s." },
-            { MessageErrorType.ProtocolMismatch,       "Unsupported client version. The server uses protocol {0}, please update the client." }
+            { MessageErrorType.ProtocolMismatch,       "Unsupported client version. The server uses protocol {0}, please update the client." },
+            { MessageErrorType.RateLimited,            "You are sending messages too fast, some of them were dropped." },
+            { MessageErrorType.ServerFull,             "The server is full. Try again later." },
+            { MessageErrorType.TooManyConnections,     "Too many connections from your address. Close other clients and try again." }
         };
 
     
@@ -77,19 +80,9 @@ public static class MessageFactory
         return CreateMessage(MessageType.Register, username, "SERVER", ProtocolInfo.Version.ToString());
     }
 
-    public static Message CreateSystemMessage(string text)
-    {
-        return CreateMessage(MessageType.SystemInfo, "SERVER", "ALL", text);
-    }
-    
     public static Message CreateSystemMessage(string receiver, string text)
     {
         return CreateMessage(MessageType.SystemInfo, "SERVER", receiver, text);
-    }
-
-    public static Message CreateBroadcast(string sender, string text)
-    {
-        return CreateMessage(MessageType.Broadcast, sender, "ALL", text);
     }
 
     public static Message CreateCommandResponse(string receiver, string text)

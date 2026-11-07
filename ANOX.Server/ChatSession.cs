@@ -21,16 +21,15 @@ public class ChatSession
         return ReferenceEquals(client, _clientA) ? _clientB : _clientA;
     }
 
-    public void Route(Message message, string senderUsername)
+    /// <summary>
+    /// Builds a new message instead of forwarding the received one: its sender/receiver fields
+    /// come from the client and could be forged (e.g. "SERVER" or another user's name).
+    /// </summary>
+    public void Route(Client sender, string text)
     {
-        if (senderUsername == _clientA.Username)
-        {
-            _clientB.SendMessage(message);
-        }
+        if (!ReferenceEquals(sender, _clientA) && !ReferenceEquals(sender, _clientB)) return;
 
-        if (senderUsername == _clientB.Username)
-        {
-            _clientA.SendMessage(message);
-        }
+        Client peer = GetPeer(sender);
+        peer.SendMessage(MessageFactory.CreateUserMessage(sender.Username, peer.Username, text));
     }
 }

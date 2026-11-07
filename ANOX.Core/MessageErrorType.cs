@@ -14,5 +14,8 @@ public enum MessageErrorType
     CannotConnectToSelf = 9,
     InviteNotFound = 10,
     TooManyRequests = 11,
-    ProtocolMismatch = 12
+    ProtocolMismatch = 12,
+    RateLimited = 13,
+    ServerFull = 14,
+    TooManyConnections = 15
 }
