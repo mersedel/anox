@@ -111,7 +111,7 @@ Host anox
 
 The script:
 
-1. builds `ANOX.Server` for `linux-arm64` into `publish\server`;
+1. builds `ANOX.Server` for `linux-arm64` into a clean `publish\server`;
 2. clears the upload folder `~/anox-upload` on the server;
 3. uploads the build there with `scp`;
 4. stops the service, replaces the contents of `/opt/anox` with the new build (files that are no longer in the build are removed) and starts it again;
