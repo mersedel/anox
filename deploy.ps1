@@ -4,6 +4,8 @@
 Set-Location $PSScriptRoot
 
 Write-Host "1/5 Building..."
+# dotnet publish doesn't clear the output folder, so remove leftovers of earlier builds
+if (Test-Path publish\server) { Remove-Item publish\server -Recurse -Force }
 dotnet publish ANOX.Server -c Release -r linux-arm64 --self-contained false -o publish\server
 if ($LASTEXITCODE -ne 0) { Write-Host "Build failed" -ForegroundColor Red; exit 1 }
 
@@ -16,7 +18,10 @@ scp -r publish\server anox:~/anox-upload
 if ($LASTEXITCODE -ne 0) { Write-Host "Upload failed" -ForegroundColor Red; exit 1 }
 
 Write-Host "4/5 Stopping, installing and starting..."
-ssh anox "sudo systemctl stop anox && sudo cp ~/anox-upload/* /opt/anox/ && sudo systemctl start anox"
+# /opt/anox holds only the build output (the config is in /etc/anox), so it is emptied
+# first: files that are no longer part of the build must not stay behind.
+ssh anox "sudo systemctl stop anox && sudo find /opt/anox -mindepth 1 -delete && sudo cp -r ~/anox-upload/. /opt/anox/ && sudo systemctl start anox"
+if ($LASTEXITCODE -ne 0) { Write-Host "Install failed, the server may be stopped! Check: ssh anox systemctl status anox" -ForegroundColor Red; exit 1 }
 
 Write-Host "5/5 Checking..."
 Start-Sleep -Seconds 3

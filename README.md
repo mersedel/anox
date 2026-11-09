@@ -114,7 +114,7 @@ The script:
 1. builds `ANOX.Server` for `linux-arm64` into `publish\server`;
 2. clears the upload folder `~/anox-upload` on the server;
 3. uploads the build there with `scp`;
-4. stops the service, copies the files into `/opt/anox` and starts it again;
+4. stops the service, replaces the contents of `/opt/anox` with the new build (files that are no longer in the build are removed) and starts it again;
 5. waits 3 seconds and checks that the service is active; if it isn't, the script fails and prints the command to view the logs.
 
 The config is not uploaded. To change settings, edit `/etc/anox/server.json` on the server and restart the service. While the service restarts (a few seconds) connected clients are dropped; they can come back with `/reconnect`.
