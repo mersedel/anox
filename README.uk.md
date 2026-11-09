@@ -32,13 +32,14 @@ dotnet run --project ANOX.Server
 ### Клієнт
 
 ```bash
-dotnet run --project ANOX.Client -- 192.168.0.10:5656
+dotnet run --project ANOX.Client
 ```
 
-Звідки клієнт бере адресу сервера (перше знайдене):
-1. Аргументи: `AnoxClient <host>[:port]` або `AnoxClient <host> <port>`
-2. `client.json` поряд з виконуваним файлом
-3. Запит при старті. Введена адреса зберігається в `client.json`.
+За замовчуванням клієнт підключається до `anox.ddns.net:5656`. Щоб підключитися до іншого сервера, наприклад до локального для тестування, передайте його адресу аргументом: `AnoxClient <host>[:port]` або `AnoxClient <host> <port>`.
+
+```bash
+dotnet run --project ANOX.Client -- localhost
+```
 
 ## Конфіг сервера (`server.json`)
 

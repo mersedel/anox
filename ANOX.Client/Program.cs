@@ -4,22 +4,22 @@ namespace ANOX.Client;
 
 class Program
 {
+    private const int DefaultPort = 5656;
+    private const string DefaultHost = "anox.ddns.net";
+
     /// <summary>
     /// Server address, first match wins:
     /// 1. arguments: AnoxClient &lt;host&gt; [port]  or  AnoxClient &lt;host:port&gt;
-    /// 2. client.json (saved after the first successful prompt)
-    /// 3. asked at start
+    /// 2. default address
     /// </summary>
     static void Main(string[] args)
     {
-        ClientConfig config = ClientConfig.Load(ClientConfig.DefaultPath);
-
         string host;
         int port;
 
         if (args.Length > 0)
         {
-            if (!ClientConfig.TryParseAddress(args[0], out host, out port))
+            if (!TryParseAddress(args[0], out host, out port))
             {
                 Console.WriteLine($"Invalid server address: {args[0]}");
                 return;
@@ -31,36 +31,36 @@ class Program
                 return;
             }
         }
-        else if (!string.IsNullOrWhiteSpace(config.Host))
-        {
-            host = config.Host;
-            port = config.Port;
-        }
         else
         {
-            (host, port) = AskAddress();
-
-            config.Host = host;
-            config.Port = port;
-            config.Save(ClientConfig.DefaultPath);
+            host = DefaultHost;
+            port = DefaultPort;
         }
 
         Chat chat = new Chat(host, port);
         chat.Start();
     }
 
-    private static (string Host, int Port) AskAddress()
+    /// <summary>Parses "host" or "host:port" (IPv6 as "[::1]:5656").</summary>
+    private static bool TryParseAddress(string input, out string host, out int port)
     {
-        while (true)
+        input = input.Trim();
+        host = input;
+        port = DefaultPort;
+
+        if (input.Length == 0) return false;
+
+        int colon = input.LastIndexOf(':');
+        bool isBracketedIpv6 = input.StartsWith('[');
+        bool hasPort = colon > 0 && (isBracketedIpv6 ? input.IndexOf(']') < colon : input.IndexOf(':') == colon);
+
+        if (hasPort)
         {
-            Console.WriteLine($"Server address (host or host:port, default port {ClientConfig.DefaultPort}): ");
-            string? input = Console.ReadLine();
-
-            if (input == null) Environment.Exit(0);
-
-            if (ClientConfig.TryParseAddress(input, out string host, out int port)) return (host, port);
-
-            Console.WriteLine("Invalid address.");
+            if (!int.TryParse(input.AsSpan(colon + 1), out port) || port is < 1 or > 65535) return false;
+            host = input.Substring(0, colon);
         }
+
+        host = host.Trim('[', ']');
+        return Uri.CheckHostName(host) != UriHostNameType.Unknown;
     }
 }
