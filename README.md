@@ -32,13 +32,14 @@ On first start, a `server.json` with default settings is created next to the exe
 ### Client
 
 ```bash
-dotnet run --project ANOX.Client -- 192.168.0.10:5656
+dotnet run --project ANOX.Client
 ```
 
-The client takes the server address from the first source available:
-1. Arguments: `AnoxClient <host>[:port]` or `AnoxClient <host> <port>`
-2. `client.json` next to the executable
-3. A prompt at startup. The address you enter is saved to `client.json`.
+By default the client connects to `anox.ddns.net:5656`. To use another server, for example a local one for testing, pass its address as an argument: `AnoxClient <host>[:port]` or `AnoxClient <host> <port>`.
+
+```bash
+dotnet run --project ANOX.Client -- localhost
+```
 
 ## Server configuration (`server.json`)
 
