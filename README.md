@@ -72,6 +72,65 @@ dotnet run --project ANOX.Server -- --hash-password
 
 You'll be asked for the password twice (input is hidden), and the command prints its hash (PBKDF2-SHA256). Paste the hash into `AdminPasswordHash` and restart the server. The password itself is never stored.
 
+## Deploy
+
+The public server runs on an AWS instance (Ubuntu, ARM64) available as `anox.ddns.net`. It is deployed from a developer machine with `deploy.ps1`.
+
+### How the server is set up
+
+| What | Where |
+|---|---|
+| Program | `/opt/anox/`: only the build output; replaced on every deploy |
+| Config | `/etc/anox/server.json`: kept apart from the program, so a deploy never overwrites it |
+| Service | `/etc/systemd/system/anox.service` |
+| Logs | systemd journal (`LogFilePath` is empty, so the server writes to the console and journald collects it) |
+
+- The server runs as a separate system user `anox`. It can't log in (`nologin`), and everything in `/opt/anox` and `/etc/anox` belongs to `root`: the service can read its program and config but can't change them.
+- The unit adds sandboxing on top: `ProtectSystem=strict` (the whole file system is read-only for the service), `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`. Because of `ProtectSystem=strict` there is nowhere to write a log file, which is why file logging is turned off.
+- systemd starts the server at boot and restarts it 5 seconds after a crash (`Restart=on-failure`).
+- The build is framework-dependent (`--self-contained false`), so the .NET 10 runtime is installed on the server itself. When the project moves to a new .NET version, update the runtime there first.
+
+### SSH access
+
+`deploy.ps1` and the commands below use the SSH host alias `anox`. Add it to `~/.ssh/config`:
+
+```
+Host anox
+    HostName anox.ddns.net
+    User ubuntu
+    IdentityFile ~/.ssh/<key>.pem
+```
+
+`ubuntu` is the instance's admin account (with `sudo`); it is the one you log in as. The `anox` user only runs the service.
+
+### Deploying
+
+```powershell
+.\deploy.ps1
+```
+
+The script:
+
+1. builds `ANOX.Server` for `linux-arm64` into a clean `publish\server`;
+2. clears the upload folder `~/anox-upload` on the server;
+3. uploads the build there with `scp`;
+4. stops the service, replaces the contents of `/opt/anox` with the new build (files that are no longer in the build are removed) and starts it again;
+5. waits 3 seconds and checks that the service is active; if it isn't, the script fails and prints the command to view the logs.
+
+The config is not uploaded. To change settings, edit `/etc/anox/server.json` on the server and restart the service. While the service restarts (a few seconds) connected clients are dropped; they can come back with `/reconnect`.
+
+### Useful commands
+
+```bash
+ssh anox systemctl status anox
+ssh anox journalctl -u anox -n 50
+ssh anox journalctl -u anox -f
+ssh -t anox sudoedit /etc/anox/server.json
+ssh anox sudo systemctl restart anox
+```
+
+Status, the last 50 log lines, live logs, editing the config, restart.
+
 ## Client commands
 
 | Command | Description |
