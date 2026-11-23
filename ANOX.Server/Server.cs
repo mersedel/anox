@@ -1,11 +1,11 @@
 ﻿using System;
 using System.IO;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 using ANOX.Core;
 using ANOX.Logger;
 
@@ -76,6 +76,20 @@ class Server
             logger.Log(LogType.Warning, "AdminPasswordHash has an unknown format, admin login will always fail.");
         }
 
+        // Before listening: a server without a usable certificate must not accept anyone.
+        SslStreamCertificateContext certificate;
+        try
+        {
+            certificate = TlsCertificate.Load(config, configPath);
+        }
+        catch (InvalidDataException e)
+        {
+            logger.Log(LogType.Error, e.Message);
+            return 1;
+        }
+
+        logger.Log(LogType.Info, $"TLS certificate: {certificate.TargetCertificate.Subject}, valid until {certificate.TargetCertificate.NotAfter:yyyy-MM-dd}");
+
         InviteManager.Configure(config);
         CommandManager.Configure(config, logger);
         ConnectionLimiter.Configure(config);
@@ -112,7 +126,7 @@ class Server
                 continue;
             }
 
-            AcceptClient(tcpClient, logger, config);
+            AcceptClient(tcpClient, certificate, logger, config);
         }
     }
 
@@ -123,7 +137,7 @@ class Server
     /// Sets up one connection. Nothing thrown here may reach the accept loop: one broken socket
     /// (e.g. reset right after accept) would otherwise crash the whole server.
     /// </summary>
-    private static void AcceptClient(TcpClient tcpClient, ILogger logger, ServerConfig config)
+    private static void AcceptClient(TcpClient tcpClient, SslStreamCertificateContext certificate, ILogger logger, ServerConfig config)
     {
         Client? client = null;
         string? addressKey = null;
@@ -133,9 +147,12 @@ class Server
             IPAddress? address = (tcpClient.Client.RemoteEndPoint as IPEndPoint)?.Address;
             string key = ConnectionLimiter.GetAddressKey(address);
 
-            if (!ConnectionLimiter.TryAcquire(key, out MessageErrorType rejection))
+            if (!ConnectionLimiter.TryAcquire(key, out _))
             {
-                _ = RejectAsync(tcpClient, rejection);
+                // Closed without a reason: over TLS the client could only read one after a full handshake,
+                // and this path runs exactly during a connection flood, when handshakes are the CPU cost
+                // to avoid. The client reports "closed during the TLS handshake" and suggests the server may be full.
+                tcpClient.Close();
                 LogRejected(logger, key);
                 return;
             }
@@ -143,7 +160,7 @@ class Server
             addressKey = key;
             logger.Log(LogType.Info, $"Client connected from {address}");
 
-            client = new Client(tcpClient, key, logger, config);
+            client = new Client(tcpClient, key, certificate, logger, config);
             client.Start();
         }
         catch (Exception e)
@@ -158,39 +175,6 @@ class Server
             {
                 tcpClient.Close();
                 if (addressKey != null) ConnectionLimiter.Release(addressKey);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Tells a rejected client why before closing, so it doesn't just see "Disconnected".
-    /// Async on purpose: the accept loop must not wait, and under a connection flood
-    /// blocking pool threads would stall the server's timers.
-    /// </summary>
-    private static async Task RejectAsync(TcpClient tcpClient, MessageErrorType reason)
-    {
-        using (tcpClient)
-        {
-            try
-            {
-                Socket socket = tcpClient.Client;
-                byte[] line = Encoding.UTF8.GetBytes(
-                    MessageParser.SerializeMessage(MessageFactory.CreateErrorMessage(reason, string.Empty)) + "\n");
-
-                // Bounds the whole exchange: a peer that never closes can't hold the socket.
-                using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(2));
-
-                await socket.SendAsync(line, SocketFlags.None, timeout.Token);
-                socket.Shutdown(SocketShutdown.Send);
-
-                // Discard what the client already sent (its Register) until it closes. Closing with
-                // unread data sends an RST, and the client could lose the error line before reading it.
-                byte[] buffer = new byte[1024];
-                while (await socket.ReceiveAsync(buffer, SocketFlags.None, timeout.Token) > 0) { }
-            }
-            catch (Exception)
-            {
-                // Best effort: timeout, reset or a peer that's already gone.
             }
         }
     }

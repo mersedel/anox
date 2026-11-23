@@ -1,6 +1,9 @@
 using System;
+using System.IO;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Threading;
 using ANOX.Core;
 using ANOX.Logger;
@@ -21,7 +24,13 @@ public class Client
 
     private readonly TcpClient _tcpClient;
     private readonly NetworkStream _stream;
-    private readonly MessageChannel _channel;
+    private readonly SslStream _sslStream;
+    private readonly SslStreamCertificateContext _certificate;
+
+    // Created after the TLS handshake: SslStream isn't readable before it, and the channel's reader requires that.
+    // Nobody can send to this client earlier anyway: it becomes visible to others only after registering.
+    private MessageChannel? _channel;
+    private readonly int _maxLineLength;
 
     private Timer? _registerTimer;
     private readonly int _registerTimeoutSeconds;
@@ -52,14 +61,20 @@ public class Client
     private string DisplayName => _clientUsername ?? "unregistered";
 
     /// <param name="addressKey">Slot already taken with <see cref="ConnectionLimiter.TryAcquire"/>; released on disconnect.</param>
-    public Client(TcpClient tcpClient, string addressKey, ILogger logger, ServerConfig config)
+    public Client(TcpClient tcpClient, string addressKey, SslStreamCertificateContext certificate, ILogger logger, ServerConfig config)
     {
         _tcpClient = tcpClient;
         _stream = tcpClient.GetStream();
 
         // A peer that stops reading would block Write forever (and with it the thread of whoever sends to it,
         // e.g. its chat partner or the invite timer). With a timeout the write fails and the peer is dropped.
+        // Set on the network stream: SslStream writes its encrypted data through it, so the timeout still applies.
         _stream.WriteTimeout = config.SendTimeoutSeconds * 1000;
+
+        // Not authenticated yet: the handshake runs on the client's own thread (see ReceiveLoop),
+        // so a slow or silent peer never blocks the accept loop.
+        _sslStream = new SslStream(_stream, leaveInnerStreamOpen: false);
+        _certificate = certificate;
 
         _maxMessageLength = config.MaxMessageLength;
         _registerTimeoutSeconds = config.RegisterTimeoutSeconds;
@@ -67,7 +82,7 @@ public class Client
         _maxProtocolViolations = config.MaxProtocolViolations;
 
         // Base64 of a UTF-8 message is at most ~5.4 chars per character, plus header fields.
-        _channel = new MessageChannel(_stream, maxLineLength: config.MaxMessageLength * 6 + 256);
+        _maxLineLength = config.MaxMessageLength * 6 + 256;
         _logger = logger;
 
         RemoteAddress = (tcpClient.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "unknown";
@@ -80,6 +95,8 @@ public class Client
     public void Start()
     {
         // Close the connection if the client doesn't register in time (bots, port scanners).
+        // Started before the handshake, so it bounds the handshake too: Disconnect closes the stream,
+        // and a handshake blocked on a silent peer fails right away instead of hanging forever.
         _registerTimer = new Timer(_ => OnRegisterTimeout(), null,
             TimeSpan.FromSeconds(_registerTimeoutSeconds), Timeout.InfiniteTimeSpan);
 
@@ -331,13 +348,31 @@ public class Client
     {
         try
         {
+            try
+            {
+                _sslStream.AuthenticateAsServer(new SslServerAuthenticationOptions { ServerCertificateContext = _certificate });
+            }
+            catch (Exception e) when (e is AuthenticationException or IOException)
+            {
+                // Port scanners and plain-TCP clients end up here: not a server error, so Info, not Error.
+                // After a register timeout the stream is already closed and the timeout itself was logged.
+                if (_isConnected)
+                {
+                    _logger.Log(LogType.Info, $"TLS handshake with {RemoteAddress} failed: {e.Message}");
+                }
+                return; // finally disconnects
+            }
+
+            MessageChannel channel = new MessageChannel(_sslStream, _maxLineLength);
+            _channel = channel;
+
             while (_isConnected)
             {
                 string? receivedSerializedMessage;
 
                 try
                 {
-                    receivedSerializedMessage = _channel.ReadSerialized();
+                    receivedSerializedMessage = channel.ReadSerialized();
                 }
                 catch (MessageTooLongException)
                 {
@@ -432,6 +467,12 @@ public class Client
                 }
             }
         }
+        catch (IOException e) when (_isConnected && !_isRegistered)
+        {
+            // With TLS 1.3 a client that rejects our certificate sends its alert only after the server
+            // has finished the handshake, so it surfaces here, on the first read. Not a server error.
+            _logger.Log(LogType.Info, $"Connection from {RemoteAddress} closed before registering: {e.Message}");
+        }
         catch (Exception e)
         {
             if (_isConnected)
@@ -448,11 +489,12 @@ public class Client
     /// <summary>Thread-safe: other clients' threads send to this client too.</summary>
     public void SendMessage(Message message)
     {
-        if (!_isConnected) return;
+        MessageChannel? channel = _channel;
+        if (!_isConnected || channel == null) return;
 
         try
         {
-            _channel.Send(message);
+            channel.Send(message);
         }
         catch (Exception)
         {
@@ -466,7 +508,7 @@ public class Client
     {
         if (!_isRegistered)
         {
-            _logger.Log(LogType.Info, $"Client from {RemoteAddress} didn't register in time");
+            _logger.Log(LogType.Info, $"Client from {RemoteAddress} didn't finish the TLS handshake or register in time");
             Disconnect();
         }
     }
@@ -488,7 +530,7 @@ public class Client
 
         try
         {
-            _stream.Close();
+            _sslStream.Close(); // also closes the network stream under it
             _tcpClient.Close();
         }
         catch (Exception)

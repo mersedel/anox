@@ -2,8 +2,10 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Authentication;
 using System.Threading;
 using ANOX.Core;
 using ANOX.Logger;
@@ -13,6 +15,9 @@ namespace ANOX.Client;
 public class Chat
 {
     private ILogger _logger = new ConsoleLogger();
+
+    // Without a limit a server that accepts TCP but never answers TLS (e.g. an old plain-text server) would hang the client.
+    private const int HandshakeTimeoutSeconds = 10;
 
     private readonly object _connectionLock = new();
     private readonly ManualResetEvent _exitEvent = new(false);
@@ -104,7 +109,15 @@ public class Chat
             return;
         }
 
-        MessageChannel channel = new MessageChannel(tcpClient.GetStream());
+        SslStream? sslStream = AuthenticateServer(tcpClient);
+
+        if (sslStream == null)
+        {
+            tcpClient.Dispose();
+            return;
+        }
+
+        MessageChannel channel = new MessageChannel(sslStream);
 
         lock (_connectionLock)
         {
@@ -123,6 +136,72 @@ public class Chat
         receiveThread.Start();
 
         SendMessage(MessageFactory.CreateRegisterMessage(_username));
+    }
+
+    /// <summary>
+    /// TLS handshake with standard certificate validation (trusted chain + the name we connected to).
+    /// Returns null after telling the user why the connection is not secure or not possible.
+    /// </summary>
+    private SslStream? AuthenticateServer(TcpClient tcpClient)
+    {
+        SslPolicyErrors certificateErrors = SslPolicyErrors.None;
+
+        SslClientAuthenticationOptions options = new SslClientAuthenticationOptions
+        {
+            TargetHost = _serverIp,
+
+            // Same decision as the default validation (accept only without errors); the callback exists
+            // only to remember what was wrong, so the user gets a reason instead of a generic exception.
+            RemoteCertificateValidationCallback = (_, _, _, errors) =>
+            {
+                certificateErrors = errors;
+                return errors == SslPolicyErrors.None;
+            }
+        };
+
+        SslStream sslStream = new SslStream(tcpClient.GetStream(), leaveInnerStreamOpen: false);
+
+        try
+        {
+            // The synchronous AuthenticateAsClient has no timeout; the async one accepts a cancellation token.
+            // Blocking on it is safe here: a console app has no synchronization context to deadlock on.
+            using CancellationTokenSource timeout = new CancellationTokenSource(TimeSpan.FromSeconds(HandshakeTimeoutSeconds));
+            sslStream.AuthenticateAsClientAsync(options, timeout.Token).GetAwaiter().GetResult();
+            return sslStream;
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.Log(LogType.Error, $"The server didn't answer the secure connection (TLS) handshake within {HandshakeTimeoutSeconds}s. " +
+                "It may be an older server without TLS or not an ANOX server. Use /reconnect to try again.");
+        }
+        catch (AuthenticationException) when (certificateErrors != SslPolicyErrors.None)
+        {
+            _logger.Log(LogType.Error, $"The server's certificate failed verification: {DescribeCertificateErrors(certificateErrors)}. " +
+                "The connection was not established, because it could not be trusted.");
+        }
+        catch (Exception e) when (e is AuthenticationException or IOException)
+        {
+            // The server closes without a reason when it is full or this address has too many connections.
+            _logger.Log(LogType.Error, "The server closed the connection during the TLS handshake. " +
+                $"It may be full or limiting connections from your address. Use /reconnect to try again later. Details: {e.Message}");
+        }
+
+        sslStream.Dispose();
+        return null;
+    }
+
+    private string DescribeCertificateErrors(SslPolicyErrors errors)
+    {
+        List<string> reasons = new List<string>();
+
+        if (errors.HasFlag(SslPolicyErrors.RemoteCertificateNotAvailable))
+            reasons.Add("the server sent no certificate");
+        if (errors.HasFlag(SslPolicyErrors.RemoteCertificateNameMismatch))
+            reasons.Add($"it is not issued for \"{_serverIp}\" (connect using the server's domain name, not an IP address or another alias)");
+        if (errors.HasFlag(SslPolicyErrors.RemoteCertificateChainErrors))
+            reasons.Add("it is not trusted (self-signed, expired, or issued by an unknown authority)");
+
+        return string.Join("; ", reasons);
     }
 
     public void Reconnect()

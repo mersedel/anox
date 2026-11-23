@@ -425,3 +425,8 @@ Thumbs.db
 *.trx
 Publish/
 *.swp
+
+# TLS keys and certificates must never be committed (the dev certificate lives outside the repo anyway).
+*.pem
+*.key
+*.pfx
