@@ -20,7 +20,9 @@ if ($LASTEXITCODE -ne 0) { Write-Host "Upload failed" -ForegroundColor Red; exit
 Write-Host "4/5 Stopping, installing and starting..."
 # /opt/anox holds only the build output (the config is in /etc/anox), so it is emptied
 # first: files that are no longer part of the build must not stay behind.
-ssh anox "sudo systemctl stop anox && sudo find /opt/anox -mindepth 1 -delete && sudo cp -r ~/anox-upload/. /opt/anox/ && sudo systemctl start anox"
+# The files are new then, so they get their mode from the upload, and scp from Windows has no
+# execute bit to carry: without chmod systemd fails with "Permission denied" (status 203/EXEC).
+ssh anox "sudo systemctl stop anox && sudo find /opt/anox -mindepth 1 -delete && sudo cp -r ~/anox-upload/. /opt/anox/ && sudo chmod 755 /opt/anox/AnoxServer && sudo systemctl start anox"
 if ($LASTEXITCODE -ne 0) { Write-Host "Install failed, the server may be stopped! Check: ssh anox systemctl status anox" -ForegroundColor Red; exit 1 }
 
 Write-Host "5/5 Checking..."
