@@ -15,7 +15,14 @@ public class ServerConfig
     public string Host { get; set; } = "0.0.0.0";
     public int Port { get; set; } = 5656;
 
-    /// <summary>Seconds a new connection has to register before it is closed.</summary>
+    /// <summary>
+    /// PEM certificate chain (server certificate first, then intermediates, e.g. fullchain.pem) and its private key.
+    /// Required: there is no unencrypted mode. Relative paths are resolved from the executable's folder.
+    /// </summary>
+    public string TlsCertificatePath { get; set; } = string.Empty;
+    public string TlsKeyPath { get; set; } = string.Empty;
+
+    /// <summary>Seconds a new connection has to finish the TLS handshake and register before it is closed.</summary>
     public int RegisterTimeoutSeconds { get; set; } = 10;
 
     /// <summary>Open connections allowed in total and from one IP address (IPv6: per /64).</summary>
